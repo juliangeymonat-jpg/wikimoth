@@ -36,7 +36,6 @@ exactly why each note was chosen.
 | Plain-markdown store (open in any editor) | ✅ | ~ | ❌ | ❌ | ✅ |
 | Token-minimal vs dumping the vault | ✅ −99% | ✅ −99% | ✅ −99% | ✅ | ~ |
 | Deterministic, API-free auto-capture | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Rich LLM-curated, source-cited pages | ~ | ❌ | ❌ | ✅ | ✅✅ |
 
 <sub>LLM Wiki *follows* links and skips the vector DB like WikiMoth, but an **LLM writes and reads** the wiki — so retrieval is agentic (an LLM call per recall, not reproducible), while its curated pages are richer. `~` = partial / not independently benchmarked.</sub>
 

@@ -1,0 +1,20 @@
+{
+  "_comment": "WikiMoth capture as a Claude Code plugin. Prerequisite: `pip install wikimoth` in the Python environment Claude Code can reach (the plugin calls the module, it does not vendor it). For a venv-correct, zero-config install instead, run `wikimoth install` (writes the absolute interpreter path).",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "python -m wikimoth.capture.hook SessionStart" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python -m wikimoth.capture.hook UserPromptSubmit" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "python -m wikimoth.capture.hook PostToolUse" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "python -m wikimoth.capture.hook Stop" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "python -m wikimoth.capture.hook SessionEnd" } ] }
+    ]
+  }
+}

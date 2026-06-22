@@ -1,0 +1,17 @@
+{
+  "name": "juliangeymonat-jpg",
+  "owner": {
+    "name": "Julian Geymonat"
+  },
+  "metadata": {
+    "description": "Plugins by Julian Geymonat"
+  },
+  "plugins": [
+    {
+      "name": "wikimoth",
+      "version": "0.1.0",
+      "source": "./plugin",
+      "description": "Deterministic, token-minimal memory for Claude Code: capture each session as a [[wikilink]] note (edges computed by code, not a model) and recall connected notes at boot."
+    }
+  ]
+}

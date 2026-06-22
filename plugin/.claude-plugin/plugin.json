@@ -1,0 +1,9 @@
+{
+  "name": "wikimoth",
+  "version": "0.1.0",
+  "description": "Deterministic, token-minimal memory for Claude Code: capture each session as a [[wikilink]] note (edges computed by code, not a model) and recall connected notes at boot.",
+  "author": { "name": "Julian Geymonat" },
+  "homepage": "https://github.com/juliangeymonat-jpg/wikimoth",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "rag", "wikilinks", "multi-hop", "deterministic"]
+}

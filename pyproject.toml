@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikimoth"
+version = "0.1.0"
+description = "Deterministic, token-minimal, reproducible memory for Claude/agents — wikilink-graph retrieval (MOTHRAG) → compaction → Claude reader."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Julian Geymonat" }]
+keywords = ["rag", "memory", "agents", "claude", "wikilinks", "multi-hop", "deterministic", "mothrag"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core WikiMoth is PURE STDLIB — retrieval (GraphRetriever), chunking, the
+# wikilink graph, the pipeline and capture are all vendored in wikimoth/retrieval/
+# (Julian's own Apache-2.0 code). No hard runtime dependency; everything below
+# is opt-in via extras and import-guarded.
+dependencies = []
+
+[project.optional-dependencies]
+# BM25-seeded HybridRetriever (the v2 default for best direct-lookup + multi-hop).
+hybrid = ["rank_bm25"]
+# Dense (semantic) baseline used in the benchmark comparison.
+dense = ["transformers", "torch", "numpy"]
+# Real Claude reader (otherwise EchoReader, the API-free default, is used).
+claude = ["anthropic"]
+# Most representative token counting (else a len//4 estimate is used).
+tokens = ["tiktoken"]
+# Reversible CCR compaction (chopratejas/headroom, Apache-2.0); import-guarded.
+headroom = ["headroom"]
+dev = ["pytest>=7", "rank_bm25"]
+
+[project.scripts]
+# `wikimoth install` wires the capture hooks into Claude Code's settings.json
+# (the pip-native equivalent of `npx <tool> install`).
+wikimoth = "wikimoth.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/juliangeymonat-jpg/wikimoth"
+
+[tool.setuptools.packages.find]
+include = ["wikimoth*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

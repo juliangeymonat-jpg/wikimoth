@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+/dist/
+/build/
+.memoth/
+# local-only dogfood runners (touch the private memory vault) — keep untracked
+examples/dogfood_real_vault.py
+examples/real_multihop.py

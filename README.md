@@ -1,12 +1,20 @@
 # WikiMoth
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/wikimoth-logo.png" width="88" alt="WikiMoth">
+</p>
+
 ### Connects the dots. The same way, every time.
+
+**[wikimoth.com](https://wikimoth.com)** · `pip install wikimoth`
 
 **Deterministic, token-minimal, auditable memory for Claude and agents.** Point WikiMoth at a
 folder of `[[wikilink]]` notes (an Obsidian vault, or Claude's own memory folder) and it
 follows the authored links to the answer flat search can't reach, shows you the exact note-chain
 behind it, and feeds the reader ~99% fewer tokens than pasting the whole vault. Pure markdown,
 no GPU, no vector DB, no LLM in the retrieval loop.
+
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/connect-the-dots.png" alt="One question, three hops: WikiMoth follows your authored links to the note that holds the answer. Flat search stops at the first keyword match.">
 
 ```bash
 pip install wikimoth
@@ -119,6 +127,8 @@ read pipeline indexes; capture and retrieval close the loop.
 
 ## Install
 
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/zero-infra.png" alt="In the retrieval loop: 0 GPUs, 0 vector DBs, 0 LLM calls.">
+
 WikiMoth's core is **pure stdlib** (`dependencies = []`): the retrieval engine, chunker, wikilink
 graph, pipeline and capture are all vendored under `wikimoth/`: nothing extra to install, no GPU, no
 vector DB.
@@ -138,6 +148,8 @@ reversible CCR compaction.
 
 ## How it works
 
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/pipeline.png" alt="Pipeline: retrieve by walking the links, compact to the note-chain (about 5k tokens), read plain markdown with an audit trail, then capture new facts back.">
+
 **retrieve → compact → read.** `index()` splits each note into ~400-token chunks (~50 overlap),
 keeping per-chunk note identity so the `[[wikilink]]` graph still connects across chunks (multi-hop
 at chunk granularity). `GraphRetriever(source="wikilinks")` seeds lexically, then walks the authored
@@ -155,6 +167,8 @@ swap the retriever (e.g. the BM25-seeded `HybridRetriever`), the compactor, or t
 
 ## Benchmark: tokens fed to the reader
 
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/token-cost.png" alt="Tokens to answer one question: about 482,000 to paste the whole vault vs about 5,000 for the WikiMoth note-chain, a 99% cut versus dumping the vault.">
+
 `wikimoth.benchmark.harness` measures *tokens fed to the reader* (what you actually pay for) across
 arms over the **same** vault and questions:
 
@@ -168,6 +182,10 @@ arms over the **same** vault and questions:
 No paid API calls run by default; every arm's reader defaults to the API-free `EchoReader`.
 
 ## Honest limits
+
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/multi-hop.png" alt="Link-only answers reached: BM25 0%, vector/dense 0%, WikiMoth 100%, on link-only corpora. On direct lookups all three tie at recall@8 = 1.00.">
+
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/determinism.png" alt="Same query run five times: WikiMoth returns one distinct result, LLM-based memory varies run to run.">
 
 WikiMoth's value is **deterministic, auditable, token-minimal, plain-markdown** memory with a real
 multi-hop capability, not "better retrieval than BM25". Specifically:

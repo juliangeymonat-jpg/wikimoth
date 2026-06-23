@@ -10,7 +10,7 @@ answer needs. This harness measures exactly that, across four arms:
 arm               what it feeds the reader                           implemented
 ================  =================================================  ===========
 ``dump``          the WHOLE vault (every note) → reader              YES (real)
-``agentic``       an LLM iteratively picks notes to read             STUB (later)
+``agentic``       an LLM browses/prunes its own context              YES (needs model)
 ``deterministic`` MemoryRAG retrieve, NoOp compaction                YES (real)
 ``deterministic_  MemoryRAG retrieve + Headroom compaction           YES (real;
  compacted``       (reversible CCR; falls back to NoOp if absent)      degrades)
@@ -32,10 +32,11 @@ Oracle hook
 how much answer quality is lost to *retrieval* (vs the reader). Like the arms
 it defaults to Echo (free); supply a real reader to measure real loss.
 
-The ``agentic`` arm is intentionally a stub: a faithful implementation makes
-real LLM tool-calls to let the model browse notes, which costs money and is out
-of scope for this code-only skeleton. It raises :class:`NotImplementedError`
-with a clear pointer rather than fabricating numbers.
+The ``agentic`` arm (*let the model prune its own context*) is real but needs a
+browsing model: pass ``agentic_model=AnthropicAgenticModel(...)`` to spend on real
+Claude tool-calls, or a scripted :class:`~wikimoth.benchmark.agentic.AgenticModel`
+to drive it offline. With no model it raises a clear :class:`NotImplementedError`
+rather than fabricating numbers. See :mod:`wikimoth.benchmark.agentic`.
 """
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from wikimoth.benchmark.agentic import (
+    AgenticModel,
+    agentic_browse,
+    load_notes_from_vault,
+)
 from wikimoth.compaction import HeadroomCompactor, NoOpCompactor
 from wikimoth.pipeline import MemoryRAG, _load_vault_chunks, _slugify_note
 from wikimoth.reader import EchoReader, Reader
@@ -86,6 +92,9 @@ class ArmRecord:
     hop_only_recall: float | None = None  # recall over the hop-only gold subset
     token_backend: str = ""
     note: str = ""
+    # agentic arm only: real billed API tokens (0 for the free arms)
+    api_input_tokens: int = 0
+    api_output_tokens: int = 0
 
 
 def _recall_at_k(
@@ -118,6 +127,25 @@ def _recall_at_k(
     return hits / len(gold)
 
 
+def _recall_from_slugs(
+    read_slugs: Sequence[str], gold_doc_ids: Sequence[str]
+) -> float | None:
+    """Recall of gold notes over a *set* of read notes (no top-k cap).
+
+    The agentic arm has no ranked top-k — it reads whatever it chooses — so its
+    recall is the fraction of gold notes that appear anywhere in the read set.
+    Returns ``None`` when no gold is supplied.
+    """
+    if not gold_doc_ids:
+        return None
+    gold = {_slugify_note(g) for g in gold_doc_ids}
+    gold.discard("")
+    if not gold:
+        return None
+    readset = {_slugify_note(s) for s in read_slugs}
+    return sum(1 for g in gold if g in readset) / len(gold)
+
+
 class FourArmHarness:
     """Run the 4-arm efficiency comparison over a ``[[wikilink]]`` vault.
 
@@ -143,10 +171,19 @@ class FourArmHarness:
         reader: Reader | None = None,
         retriever: Any | None = None,
         top_k: int = 8,
+        agentic_model: AgenticModel | None = None,
+        agentic_max_steps: int = 12,
+        agentic_search_limit: int = 10,
     ) -> None:
         self.vault_dir = Path(vault_dir)
         self.reader: Reader = reader if reader is not None else EchoReader()
         self.top_k = int(top_k)
+
+        # Agentic arm config (the model is optional; only the agentic arm uses it).
+        self.agentic_model = agentic_model
+        self.agentic_max_steps = int(agentic_max_steps)
+        self.agentic_search_limit = int(agentic_search_limit)
+        self._agentic_notes_cache: list[Any] | None = None
 
         # Load the corpus once; every arm shares it.
         self._chunks: list[Any] = _load_vault_chunks(self.vault_dir)
@@ -185,19 +222,59 @@ class FourArmHarness:
             note="whole vault fed to reader (baseline)",
         )
 
-    def run_agentic(self, q: Question) -> ArmRecord:
-        """STUB — agentic note-selection (LLM browses notes). NOT implemented.
+    def _agentic_notes(self) -> list[Any]:
+        """Whole-note view of the vault for the agentic arm (loaded once)."""
+        if self._agentic_notes_cache is None:
+            self._agentic_notes_cache = load_notes_from_vault(self.vault_dir)
+        return self._agentic_notes_cache
 
-        A faithful arm gives the model a tool to list/open notes and lets it
-        iteratively decide which to read, then answers from its selection. That
-        is real, paid, multi-call LLM agency — deliberately out of scope for
-        this code-only skeleton. Implement against MOTHRAG's reader tool-calling
-        surface when an API budget is approved.
+    def run_agentic(self, q: Question) -> ArmRecord:
+        """Let the model browse the vault and prune its own context, then answer.
+
+        Drives :func:`~wikimoth.benchmark.agentic.agentic_browse` with this
+        harness's ``agentic_model``. ``tokens_fed_to_reader`` is the tokens of note
+        bodies the agent pulled in (its self-curated context); the billed
+        ``api_input``/``api_output`` and step count land in ``note``. Recall is over
+        the *set* of notes the agent opened (it has no ranked top-k).
+
+        Raises :class:`NotImplementedError` if no ``agentic_model`` was supplied —
+        the arm is real, but it needs a browsing model (paid Claude tool-calls, or
+        an offline scripted policy).
         """
-        raise NotImplementedError(
-            "agentic arm is a stub: it requires real LLM tool-calls to let the "
-            "model browse/select notes (paid, multi-call). Out of scope for the "
-            "code-only harness. Implement later with an explicit API budget."
+        if self.agentic_model is None:
+            raise NotImplementedError(
+                "agentic arm needs a browsing model. Pass "
+                "agentic_model=AnthropicAgenticModel(...) (pip install "
+                "'wikimoth[claude]' + ANTHROPIC_API_KEY) to run it against real "
+                "Claude tool-calls, or a scripted AgenticModel to drive it offline."
+            )
+        t0 = time.perf_counter()
+        res = agentic_browse(
+            q.text,
+            self._agentic_notes(),
+            self.agentic_model,
+            max_steps=self.agentic_max_steps,
+            search_limit=self.agentic_search_limit,
+        )
+        dt = time.perf_counter() - t0
+        recall = _recall_from_slugs(res.notes_read, q.gold_doc_ids)
+        hop_only = _recall_from_slugs(res.notes_read, q.hop_only_doc_ids)
+        return ArmRecord(
+            arm="agentic",
+            question=q.text,
+            tokens_fed_to_reader=res.content_tokens,
+            retrieval_recall_at_k=recall,
+            answer=res.answer,
+            latency_s=dt,
+            n_passages=len(res.notes_read),
+            hop_only_recall=hop_only,
+            token_backend=token_backend(),
+            note=(
+                f"agentic browse: {res.steps} steps, "
+                f"api_input={res.api_input_tokens}, api_output={res.api_output_tokens}"
+            ),
+            api_input_tokens=res.api_input_tokens,
+            api_output_tokens=res.api_output_tokens,
         )
 
     def run_deterministic(self, q: Question) -> ArmRecord:
@@ -268,6 +345,34 @@ class FourArmHarness:
             signatures.add(sig)
         return {"distinct_results": len(signatures), "deterministic": len(signatures) == 1}
 
+    def agentic_reproducibility(self, q: Question, *, repeats: int = 3) -> dict:
+        """Run the agentic browse ``repeats`` times; measure how the read-set drifts.
+
+        The contrast to :meth:`retrieval_reproducibility`: a real LLM re-decides
+        each run, so its self-curated note-set typically varies (``distinct_results
+        > 1``), while deterministic retrieval is bit-stable (``== 1``). Compares the
+        *set* of notes read (order-independent). **Paid** — each repeat is a full
+        browse. Requires an ``agentic_model``.
+        """
+        if self.agentic_model is None:
+            raise NotImplementedError("agentic_reproducibility needs an agentic_model.")
+        notes = self._agentic_notes()
+        signatures: set[frozenset[str]] = set()
+        for _ in range(max(1, repeats)):
+            res = agentic_browse(
+                q.text,
+                notes,
+                self.agentic_model,
+                max_steps=self.agentic_max_steps,
+                search_limit=self.agentic_search_limit,
+            )
+            signatures.add(frozenset(res.notes_read))
+        return {
+            "distinct_results": len(signatures),
+            "deterministic": len(signatures) == 1,
+            "runs": max(1, repeats),
+        }
+
     # ------------------------------------------------------------------
     # Orchestration
     # ------------------------------------------------------------------
@@ -290,15 +395,21 @@ class FourArmHarness:
         arms: Sequence[str] = ("dump", "deterministic", "deterministic_compacted"),
         skip_agentic: bool = True,
     ) -> list[ArmRecord]:
-        """Run ``arms`` over ``questions``. ``agentic`` is skipped by default.
+        """Run ``arms`` over ``questions``.
 
-        Returns a flat list of :class:`ArmRecord`. The ``agentic`` arm, if
-        requested, raises unless ``skip_agentic`` is left ``True`` (in which
-        case it is silently dropped from the arm set with a note record).
+        Returns a flat list of :class:`ArmRecord`. The ``agentic`` arm runs per
+        question only when an ``agentic_model`` is configured *and* ``skip_agentic``
+        is ``False`` (it makes paid LLM calls); otherwise it is recorded as a single
+        skipped marker row explaining why.
         """
         records: list[ArmRecord] = []
         for arm in arms:
-            if arm == "agentic" and skip_agentic:
+            if arm == "agentic" and (skip_agentic or self.agentic_model is None):
+                why = (
+                    "skipped (skip_agentic=True)"
+                    if self.agentic_model is not None
+                    else "skipped (no agentic_model supplied)"
+                )
                 records.append(
                     ArmRecord(
                         arm="agentic",
@@ -309,7 +420,7 @@ class FourArmHarness:
                         latency_s=0.0,
                         n_passages=0,
                         token_backend=token_backend(),
-                        note="STUB — skipped (NotImplementedError); needs LLM tool-calls",
+                        note=why,
                     )
                 )
                 continue

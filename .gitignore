@@ -6,6 +6,11 @@ __pycache__/
 /dist/
 /build/
 .memoth/
+# secrets / local API keys — NEVER commit (key never leaves this machine)
+.env
+.env.*
+# agentic benchmark output (may embed prompts/answers) — keep local
+agentic_benchmark.json
 # local-only dogfood runners (touch the private memory vault) — keep untracked
 examples/dogfood_real_vault.py
 examples/real_multihop.py

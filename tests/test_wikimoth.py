@@ -261,14 +261,15 @@ def test_harness_compacted_arm_notes_headroom_fallback(tmp_path):
 def test_harness_run_skips_agentic_by_default(tmp_path):
     for fname, text in VAULT.items():
         (tmp_path / fname).write_text(text, encoding="utf-8")
-    h = FourArmHarness(tmp_path)
+    h = FourArmHarness(tmp_path)  # no agentic_model
     recs = h.run([Question(text=QUESTION)],
                  arms=("dump", "agentic", "deterministic"))
     arms_run = {r.arm for r in recs}
     assert "dump" in arms_run and "deterministic" in arms_run
     agentic_recs = [r for r in recs if r.arm == "agentic"]
     assert len(agentic_recs) == 1
-    assert "stub" in agentic_recs[0].note.lower()
+    # the arm is real now; with no model supplied it is recorded as skipped
+    assert "skipped" in agentic_recs[0].note.lower()
 
 
 def test_oracle_retrieval_loss_hook(tmp_path):

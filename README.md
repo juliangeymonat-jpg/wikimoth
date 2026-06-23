@@ -177,7 +177,7 @@ arms over the **same** vault and questions:
 | `dump` | the whole vault | baseline |
 | `deterministic` | wikilink-graph retrieval | implemented |
 | `deterministic_compacted` | retrieval + Headroom | implemented |
-| `agentic` | an LLM iteratively browses & picks | stub (needs LLM tool-calls) |
+| `agentic` | an LLM browses and prunes its own context | implemented (Claude tool-use) |
 
 No paid API calls run by default; every arm's reader defaults to the API-free `EchoReader`.
 
@@ -199,7 +199,24 @@ multi-hop capability, not "better retrieval than BM25". Specifically:
   strictly better on recall.
 - **Determinism** is inherent to any static retriever (BM25/dense too); WikiMoth's determinism win is
   specifically **vs LLM-summarised memory** (which varies run to run).
-- The `agentic` benchmark arm and a published large-scale capture dogfood are not done yet.
+- **vs letting the model prune its own context** (the `agentic` arm, real run against Claude
+  Sonnet 4.6): an agent that browses the notes folder itself reaches the same answers, multi-hop
+  included (12/12 exact match, recall 1.00). So it is not crippled, and it actually pulls slightly
+  fewer note-body content tokens than WikiMoth does (mean 118 vs 198), because it opens only the
+  exact chain notes rather than a top-k feed. For context, WikiMoth's ~97% token saving is measured
+  against dumping the whole vault into the reader (5,736 tokens fed drops to ~198), not against the
+  agent's content reads. The catch with the agent is what you pay for: every browse step re-sends the
+  growing transcript, so across 4 to 6 paid round-trips per question the agent billed a mean of
+  ~4,353 input tokens, roughly 22x the ~198 tokens one deterministic pass feeds, with zero model
+  calls inside the deterministic retrieval loop. That is where the real edge sits: cost, round-trips,
+  and a no-model-in-the-loop pass you can audit, not fewer content tokens. On this clean single-path
+  corpus the agent's read-set was also stable across repeats, so determinism was NOT shown to differ
+  here (the determinism edge vs LLM-summarised memory is a separate point and is not claimed from
+  this run). Two honesty notes: the 22x compares the agent's full billed loop against WikiMoth's
+  retrieval payload only (a production WikiMoth answer also pays a reader, which narrows the real gap
+  to roughly 10x), and the multiple is corpus-specific (1-sentence notes, chains of depth no more
+  than 3), not a law. Run it yourself: `python scripts/run_agentic_benchmark.py` (needs an API key).
+  A published large-scale capture dogfood is still pending.
 
 ## Pluggable + License
 

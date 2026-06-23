@@ -8,6 +8,7 @@ Subcommands::
     wikimoth uninstall [--user|--project] [--dir DIR]
     wikimoth status [--vault PATH]
     wikimoth serve [--vault PATH] [--host H] [--port N] [--top-k K]
+    wikimoth mcp [--vault PATH] [--top-k K]   # MCP server (stdio): Claude calls recall itself
     wikimoth capture EVENT            # manual hook invocation (reads stdin)
 
 ``install`` writes the five lifecycle hooks into a Claude Code ``settings.json``
@@ -115,6 +116,21 @@ def _cmd_serve(args) -> int:
     return viewer.serve(vault, host=args.host, port=args.port, top_k=args.top_k)
 
 
+def _cmd_mcp(args) -> int:
+    from wikimoth import mcp
+
+    if args.vault:
+        vault = Path(args.vault)
+    else:
+        cfg = CaptureConfig.resolve(cwd=Path.cwd(), env=os.environ)
+        vault = cfg.vault_dir
+    # stdout is the MCP protocol channel: diagnostics go to stderr ONLY, never stdout.
+    print(f"wikimoth mcp: serving vault {vault} over stdio (top_k={args.top_k})", file=sys.stderr)
+    if not vault.is_dir():
+        print(f"  note: {vault} does not exist yet; recall reports this until it does.", file=sys.stderr)
+    return mcp.serve_stdio(vault, default_top_k=args.top_k)
+
+
 def _cmd_capture(args) -> int:
     from wikimoth.capture.hook import main as hook_main
 
@@ -149,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp_v.add_argument("--port", type=int, default=8765, help="bind port (default 8765)")
     sp_v.add_argument("--top-k", type=int, default=8, dest="top_k", help="chunks per question (default 8)")
     sp_v.set_defaults(func=_cmd_serve)
+
+    sp_m = sub.add_parser("mcp", help="run the MCP server (stdio) so Claude calls WikiMoth recall in the loop")
+    sp_m.add_argument("--vault", help="vault dir to serve (default: resolved capture vault)")
+    sp_m.add_argument("--top-k", type=int, default=8, dest="top_k", help="default chunks per recall (default 8)")
+    sp_m.set_defaults(func=_cmd_mcp)
 
     sp_c = sub.add_parser("capture", help="run a hook event manually (reads stdin JSON)")
     sp_c.add_argument("event", help="hook event name, e.g. SessionStart")

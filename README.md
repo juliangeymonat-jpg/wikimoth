@@ -117,6 +117,24 @@ A zero-dependency local web viewer (pure stdlib, no Flask, no JS framework, no n
 Because the store is plain markdown, you can equally open the same vault in Obsidian or VS Code;
 the viewer is a convenience, not a lock-in.
 
+## In the agent loop: `wikimoth mcp`
+
+`wikimoth serve` is for *you*. The MCP server is for the *model*: it exposes the same deterministic
+retrieval over the Model Context Protocol, so Claude calls it itself instead of you fetching context
+by hand.
+
+```bash
+claude mcp add wikimoth -- wikimoth mcp     # Claude Code
+```
+
+Now Claude has a `recall(query)` tool. Ask it something that lives in your notes and it calls
+`recall`; WikiMoth walks the `[[links]]` and hands back the exact note-chain (no LLM call to
+retrieve, token-minimal, the same result every time), and Claude answers from it. A `status` tool
+reports the connected vault. For any other MCP client, use `wikimoth mcp` as the server command
+(stdio transport); point it at a specific vault with `--vault PATH`.
+
+It is pure stdlib: a hand-rolled JSON-RPC 2.0 stdio server, no MCP SDK dependency.
+
 ## Capture: sessions → notes (the write half)
 
 Retrieval needs a `[[wikilink]]` vault; hand-authoring one is the friction. `wikimoth.capture` builds

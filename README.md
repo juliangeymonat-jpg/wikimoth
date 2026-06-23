@@ -24,6 +24,22 @@ wikimoth serve        # browse the vault + see "what memory fed this answer"
 
 ---
 
+## Why not just let Claude manage its own context?
+
+We benchmarked exactly that. An agent that browses the notes folder and prunes its own
+context reaches the **same answers**, multi-hop included (12/12 in our run). It just pays for it:
+**4 to 6 model round-trips and roughly 10x the billed tokens per question**, because it re-sends a
+growing transcript every step. WikiMoth retrieves the same note-chain in **one deterministic pass,
+no model in the loop**, and shows you the exact notes behind the answer.
+
+<img src="https://raw.githubusercontent.com/juliangeymonat-jpg/wikimoth/main/docs/img/agent-vs-wikimoth.png" alt="Same answer, far less work: letting Claude prune its own context takes 4 to 6 model round-trips, about 10x the billed tokens, and roughly 9 seconds per answer; WikiMoth does it in one deterministic retrieval pass with zero model calls in the loop, in milliseconds, with an auditable note-chain. Both reach the right answer 12 out of 12.">
+
+<sub>Real run, Claude Sonnet 4.6, 12 multi-hop questions on a reproducible vault. The ~10x counts a
+reader on both sides; it is corpus-specific, not a universal law. Reproduce it with
+`python scripts/run_agentic_benchmark.py`. Full breakdown in [Honest limits](#honest-limits).</sub>
+
+---
+
 ## Why WikiMoth
 
 Most agent memory is either *paste the whole notes folder into context* (expensive, and the model

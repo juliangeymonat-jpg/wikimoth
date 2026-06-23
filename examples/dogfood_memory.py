@@ -11,18 +11,18 @@ prints, for each:
     * their hop distance (0 = lexical seed; >=1 = reached via ``[[wikilink]]``),
     * the per-chunk and per-question token count fed to the reader.
 
-Notes are chunked into ~400-token pieces (MOTHRAG's convention), so retrieval
-returns the relevant *chunks*, not whole files — a single fat note (the
+Notes are chunked into ~400-token pieces (the chunking convention), so retrieval
+returns the relevant *chunks*, not whole files: a single fat note (the
 ~30k-token ``MEMORY.md`` table of contents) no longer floods the reader. The
 pure-navigation ``MEMORY.md`` hub is indexed as **graph edges only** (its
 ``[[links]]`` build edges; its content is excluded from candidates).
 
-**Retrieval only** — the reader is never called, so there is **no API call and
+**Retrieval only**: the reader is never called, so there is **no API call and
 no cost**. ``GraphRetriever(source="wikilinks")`` (vendored in
 ``wikimoth.retrieval``) is pure-Python (no embeddings, no network), so this is
 fast even over the whole vault.
 
-Run (WikiMoth is self-contained — just put it on the path):
+Run (WikiMoth is self-contained, just put it on the path):
 
     PYTHONPATH=. python examples/dogfood_memory.py [VAULT_DIR]
 """

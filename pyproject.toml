@@ -25,8 +25,8 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Optional BM25-seeded HybridRetriever. Ties the pure-stdlib graph default on our
-# benchmarks (the multi-hop win is the graph traversal, not BM25); kept as an extra.
+# Optional BM25-seeded HybridRetriever: an alternative seeding for the graph
+# traversal. The pure-stdlib graph default needs no extra dependency.
 hybrid = ["rank_bm25"]
 # Dense (semantic) baseline used in the benchmark comparison.
 dense = ["transformers", "torch", "numpy"]

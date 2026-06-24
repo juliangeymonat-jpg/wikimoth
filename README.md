@@ -172,7 +172,7 @@ pip install wikimoth
 # before the PyPI release, install from source:
 pip install "git+https://github.com/juliangeymonat-jpg/wikimoth"
 # optional extras:
-pip install "wikimoth[hybrid]"          # BM25-seeded HybridRetriever (best direct-lookup + multi-hop)
+pip install "wikimoth[hybrid]"          # optional BM25-seeded retriever (ties graph-pure on our benchmarks)
 pip install "wikimoth[claude,tokens]"   # real Claude reader + exact tiktoken counts
 ```
 

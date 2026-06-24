@@ -124,9 +124,19 @@ retrieval over the Model Context Protocol, so Claude calls it itself instead of 
 by hand.
 
 ```bash
-pip install wikimoth                                  # in the same Python env Claude Code uses
-claude mcp add wikimoth -- python -m wikimoth mcp     # Claude Code
+# 1. install into the Python that runs your Claude Code
+python -m pip install wikimoth
+
+# 2. verify the command resolves (prints status, then exits)
+python -m wikimoth status
+
+# 3. register the MCP server with Claude Code
+claude mcp add wikimoth -- python -m wikimoth mcp
 ```
+
+Step 2 is the check that matters: if `python -m wikimoth status` prints a status line, then
+`python -m wikimoth mcp` will run for Claude too. Use the **same `python`** in all three steps (it is
+`python3` on some systems); that is the one thing that has to match.
 
 Now Claude has a `recall(query)` tool. Ask it something that lives in your notes and it calls
 `recall`; WikiMoth walks the `[[links]]` and hands back the exact note-chain (no LLM call to

@@ -230,6 +230,22 @@ def test_initialize_non_dict_params_ok(tmp_path):
     assert resp["result"]["serverInfo"]["name"] == "wikimoth"
 
 
+def test_python_dash_m_wikimoth_runs():
+    """`python -m wikimoth ...` must work (the documented MCP command does not rely
+    on the `wikimoth` console script being on PATH). Regression guard."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        [sys.executable, "-m", "wikimoth", "--help"],
+        capture_output=True, text=True, cwd=str(repo_root),
+    )
+    assert r.returncode == 0, r.stderr
+    assert "mcp" in r.stdout  # the mcp subcommand is reachable via `python -m wikimoth`
+
+
 def test_serve_stdio_broken_stdout_breaks_clean(tmp_path):
     class _BrokenStdout:
         def write(self, s):

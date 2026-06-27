@@ -31,7 +31,12 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from wikimoth import __version__
-from wikimoth.pipeline import MemoryRAG, _load_vault_chunks
+from wikimoth.conflicts import format_conflicts, scan_conflicts
+from wikimoth.decay import format_decay, scan_decay
+from wikimoth.dedup import format_dedup, scan_dedup
+from wikimoth.lint import format_lint, scan_lint
+from wikimoth.pipeline import MemoryRAG, _load_vault_chunks, _parse_iso_date
+from wikimoth.supersede import SupersedeError, format_result, supersede
 from wikimoth.tokens import count_passage_tokens, token_backend
 
 # The MCP protocol revision we speak (echoed back if the client requests one).
@@ -59,6 +64,14 @@ TOOLS = [
                     "type": "integer",
                     "description": "max note chunks to return (default 8)",
                 },
+                "as_of": {
+                    "type": "string",
+                    "description": "time-travel: show the vault as it was valid at this ISO date (YYYY-MM-DD)",
+                },
+                "show_superseded": {
+                    "type": "boolean",
+                    "description": "include superseded note bodies (default false hides them, keeping the edge)",
+                },
             },
             "required": ["query"],
         },
@@ -71,6 +84,122 @@ TOOLS = [
             "memory is wired up."
         ),
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "list_conflicts",
+        "description": (
+            "Deterministically list contradiction CANDIDATES in the WikiMoth vault: "
+            "notes that assert different values for the same (subject, predicate). "
+            "No model finds them. Each candidate is for YOU to adjudicate: decide if "
+            "it is a real contradiction and which note is current. Notes tagged "
+            "valid-time 'disjoint' are likely a legitimate succession (consider "
+            "superseding), 'overlapping' is a real conflict. Use before trusting a "
+            "possibly-stale fact recalled from memory."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "include_inline": {
+                    "type": "boolean",
+                    "description": "also read Dataview 'key:: value' inline body fields",
+                },
+                "all_keys": {
+                    "type": "boolean",
+                    "description": "compare every non-subject key, not just domain facts",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_lint",
+        "description": (
+            "Deterministically report vault-hygiene issues: broken [[links]], "
+            "orphan notes, duplicate identities, empty stubs, stale/expired notes, "
+            "and supersession chains/cycles. No model. Read-only. Use to check the "
+            "memory's structural health or before trusting a possibly-broken link."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "stale_days": {
+                    "type": "integer",
+                    "description": "also flag notes whose mtime is older than N days (0 = off)",
+                },
+                "include_sessions": {
+                    "type": "boolean",
+                    "description": "include session-* notes in orphan/stub/stale checks",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_duplicates",
+        "description": (
+            "Deterministically find exact and near-duplicate notes (MinHash/Jaccard, "
+            "no model). WikiMoth capture is append-only and never merges, so content "
+            "gets restated; this surfaces it. Candidates only: decide which to keep "
+            "(consider superseding the older one)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "threshold": {
+                    "type": "number",
+                    "description": "near-duplicate Jaccard threshold in (0,1] (default 0.8)",
+                },
+                "include_sessions": {
+                    "type": "boolean",
+                    "description": "also scan session-* notes (skipped by default)",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_fading",
+        "description": (
+            "Deterministically list the 'fading' review queue: notes going cold "
+            "(old, rarely linked, rarely recalled), scored by a decay + access + "
+            "connectivity strength. Read-only, nothing is deleted. Use to suggest "
+            "what the user might archive, refresh, or supersede."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "threshold": {
+                    "type": "number",
+                    "description": "fading strength threshold (default 0.25)",
+                },
+                "tau_days": {
+                    "type": "number",
+                    "description": "decay time constant in days (default 90)",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "supersede",
+        "description": (
+            "Mark an OLD note as replaced by a NEW one, WITHOUT deleting it "
+            "(invalidate-don't-delete: the file stays, its frontmatter records "
+            "superseded_by/valid_to/status). Call this AFTER you have adjudicated "
+            "that NEW genuinely replaces OLD (e.g. from a list_conflicts candidate). "
+            "OLD/NEW are note stems, slugs, or paths."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "old": {"type": "string", "description": "the superseded note (stem/slug/path)"},
+                "new": {"type": "string", "description": "the current note that replaces it"},
+                "reason": {"type": "string", "description": "optional audit note"},
+                "reverse": {"type": "boolean", "description": "also stamp replaces: on NEW"},
+            },
+            "required": ["old", "new"],
+            "additionalProperties": False,
+        },
     },
 ]
 
@@ -198,6 +327,16 @@ class _Server:
             return self._recall(args)
         if name == "status":
             return self._status()
+        if name == "list_conflicts":
+            return self._list_conflicts(args)
+        if name == "list_lint":
+            return self._list_lint(args)
+        if name == "list_duplicates":
+            return self._list_duplicates(args)
+        if name == "list_fading":
+            return self._list_fading(args)
+        if name == "supersede":
+            return self._supersede(args)
         return _tool_text(f"Unknown tool: {name!r}", is_error=True)
 
     def _recall(self, args: dict) -> dict:
@@ -216,11 +355,104 @@ class _Server:
                 is_error=True,
             )
         _, rag, total, _, _ = self._index()
+        # Per-request supersession-aware / as-of view (the index is shared/cached).
+        as_of = args.get("as_of")
+        if isinstance(as_of, str) and as_of.strip():
+            parsed = _parse_iso_date(as_of)
+            if parsed is None:
+                # Don't silently fall back to the present: an agent asking for a
+                # historical view must not be handed current-view notes.
+                return _tool_text(f"recall: as_of must be YYYY-MM-DD, got {as_of!r}", is_error=True)
+            rag.as_of = parsed
+        else:
+            rag.as_of = None
+        rag.show_superseded = bool(args.get("show_superseded"))
         pairs = rag.retrieve_with_hops(query, top_k=top_k)
         per_chunk = [count_passage_tokens([getattr(c, "text", "") or ""]) for c, _ in pairs]
         fed = sum(per_chunk)
         pct = (100.0 * (1 - fed / total)) if total else 0.0
         return _tool_text(_format_recall(query, pairs, per_chunk, fed, total, pct))
+
+    def _list_conflicts(self, args: dict) -> dict:
+        if not self.vault_dir.is_dir():
+            return _tool_text(
+                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
+                "start capturing one, or start the server with --vault PATH.",
+                is_error=True,
+            )
+        report = scan_conflicts(
+            self.vault_dir,
+            include_inline=bool(args.get("include_inline")),
+            all_keys=bool(args.get("all_keys")),
+        )
+        return _tool_text(format_conflicts(report, fmt="text"))
+
+    def _list_lint(self, args: dict) -> dict:
+        if not self.vault_dir.is_dir():
+            return _tool_text(
+                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
+                "start capturing one, or start the server with --vault PATH.",
+                is_error=True,
+            )
+        stale = args.get("stale_days")
+        if isinstance(stale, bool) or not isinstance(stale, int) or stale < 0:
+            stale = 0
+        report = scan_lint(
+            self.vault_dir,
+            stale_days=stale,
+            include_sessions=bool(args.get("include_sessions")),
+        )
+        return _tool_text(format_lint(report, fmt="text"))
+
+    def _list_duplicates(self, args: dict) -> dict:
+        if not self.vault_dir.is_dir():
+            return _tool_text(
+                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
+                "start capturing one, or start the server with --vault PATH.",
+                is_error=True,
+            )
+        threshold = args.get("threshold")
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not (0 < threshold <= 1):
+            threshold = 0.8
+        report = scan_dedup(
+            self.vault_dir,
+            threshold=float(threshold),
+            include_sessions=bool(args.get("include_sessions")),
+        )
+        return _tool_text(format_dedup(report, fmt="text"))
+
+    def _list_fading(self, args: dict) -> dict:
+        if not self.vault_dir.is_dir():
+            return _tool_text(
+                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
+                "start capturing one, or start the server with --vault PATH.",
+                is_error=True,
+            )
+        kw: dict = {}
+        thr = args.get("threshold")
+        if isinstance(thr, (int, float)) and not isinstance(thr, bool) and thr > 0:
+            kw["threshold"] = float(thr)
+        tau = args.get("tau_days")
+        if isinstance(tau, (int, float)) and not isinstance(tau, bool) and tau > 0:
+            kw["tau_days"] = float(tau)
+        report = scan_decay(self.vault_dir, **kw)
+        return _tool_text(format_decay(report, fmt="text"))
+
+    def _supersede(self, args: dict) -> dict:
+        old = args.get("old")
+        new = args.get("new")
+        if not isinstance(old, str) or not old.strip() or not isinstance(new, str) or not new.strip():
+            return _tool_text("supersede needs non-empty 'old' and 'new' note refs.", is_error=True)
+        reason = args.get("reason")
+        try:
+            result = supersede(
+                self.vault_dir, old.strip(), new.strip(),
+                reason=reason.strip() if isinstance(reason, str) else "",
+                reverse=bool(args.get("reverse")),
+            )
+        except SupersedeError as e:
+            return _tool_text(f"supersede: {e}", is_error=True)
+        return _tool_text(format_result(result))
 
     def _status(self) -> dict:
         if not self.vault_dir.is_dir():

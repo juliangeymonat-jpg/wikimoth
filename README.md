@@ -60,6 +60,7 @@ exactly why each note was chosen.
 | Plain-markdown store (open in any editor) | ✅ | ~ | ❌ | ❌ | ✅ |
 | Token-minimal vs dumping the vault | ✅ −99% | ✅ −99% | ✅ −99% | ✅ | ~ |
 | Deterministic, API-free auto-capture | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Hygiene **without an LLM** (conflicts · dupes · stale · supersede) | ✅ | ❌ | ❌ | ~ | ❌ |
 
 <sub>LLM Wiki *follows* links and skips the vector DB like WikiMoth, but an **LLM writes and reads** the wiki, so retrieval is agentic (an LLM call per recall, not reproducible), while its curated pages are richer. `~` = partial / not independently benchmarked.</sub>
 
@@ -171,6 +172,39 @@ wikimoth uninstall               # remove the hooks again
 Lifecycle: **SessionStart** recalls recent sessions into context · **UserPromptSubmit / PostToolUse**
 buffer the session · **Stop / SessionEnd** write one note. The captured notes are exactly what the
 read pipeline indexes; capture and retrieval close the loop.
+
+## Keep memory honest: the hygiene suite
+
+A memory that only grows rots. Notes go stale, two notes start disagreeing, the same fact gets saved
+twice, an old fact is replaced but never retired. Other agent-memory tools resolve this *with an LLM*
+that silently overwrites the old state. WikiMoth ships six commands that surface it **deterministically**,
+and **never delete anything**: git is your audit trail.
+
+| command | finds | writes? |
+|---|---|:--:|
+| `wikimoth conflicts` | two notes asserting a different value for the same fact (type-aware, valid-time precision) | no |
+| `wikimoth lint` | broken links, orphans, stubs, stale notes, supersession cycles | no |
+| `wikimoth dedup` | exact + near-duplicate notes (MinHash + LSH, confirmed by exact Jaccard) | no |
+| `wikimoth decay` | notes going cold: old, rarely linked, rarely recalled (a review queue, never auto-delete) | no |
+| `wikimoth recall --as-of <date>` | what your memory asserted on a past date (bitemporal time-travel, no DB) | no |
+| `wikimoth supersede OLD NEW` | retire a fact: invalidate, don't delete | **yes** |
+
+Three principles hold across all of them:
+
+- **Invalidate, don't delete.** `supersede` marks a note superseded and links it to its replacement
+  in frontmatter. The old body drops out of retrieval, but its `[[link]]` to the current note stays
+  live, so a query that lands on the stale note **hops free to the new one**. Nothing is ever `rm`'d;
+  the history lives in git.
+- **The tool never guesses.** Every command emits *candidates*. The one judgement that isn't
+  mechanical, deciding whether two notes truly contradict, is left to the calling model, never baked
+  into the tool. So the output is reproducible and you can read exactly why each candidate was flagged.
+- **Bitemporal, no database.** `recall --as-of 2026-01-01` replays what the vault asserted on that
+  date from frontmatter validity windows alone. No event log, no vector store, no migration.
+
+Same invariants as the rest of WikiMoth: pure stdlib, deterministic (byte-identical output),
+read-only except the single `supersede` writer, plain markdown you can diff. The seven commands are
+also exposed over MCP (`list_conflicts`, `list_lint`, `list_duplicates`, `list_fading`, `supersede`,
+plus `recall` gaining `as_of` / `show_superseded`), so the agent can keep its own memory clean.
 
 ## Install
 

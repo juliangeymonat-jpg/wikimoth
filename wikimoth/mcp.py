@@ -40,7 +40,7 @@ from wikimoth.supersede import SupersedeError, format_result, supersede
 from wikimoth.tokens import count_passage_tokens, token_backend
 
 # The MCP protocol revision we speak (echoed back if the client requests one).
-_PROTOCOL_VERSION = "2024-11-05"
+_PROTOCOL_VERSION = "2025-06-18"
 
 TOOLS = [
     {

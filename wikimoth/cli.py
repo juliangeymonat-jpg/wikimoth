@@ -26,6 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from wikimoth import __version__
 from wikimoth.capture.config import CaptureConfig
 from wikimoth.capture import install as _install
 
@@ -292,6 +293,7 @@ def _cmd_capture(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wikimoth", description="WikiMoth deterministic memory capture")
+    p.add_argument("--version", action="version", version=f"wikimoth {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     def add_scope(sp):

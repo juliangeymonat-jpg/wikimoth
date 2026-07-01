@@ -4,6 +4,7 @@
 
 Subcommands::
 
+    wikimoth --version
     wikimoth install [--user|--project] [--dir DIR] [--vault PATH]
     wikimoth uninstall [--user|--project] [--dir DIR]
     wikimoth status [--vault PATH]

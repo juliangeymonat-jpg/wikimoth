@@ -39,8 +39,13 @@ from wikimoth.pipeline import MemoryRAG, _load_vault_chunks, _parse_iso_date
 from wikimoth.supersede import SupersedeError, format_result, supersede
 from wikimoth.tokens import count_passage_tokens, token_backend
 
-# The MCP protocol revision we speak (echoed back if the client requests one).
+# The MCP protocol revisions this server actually implements. Per the MCP
+# lifecycle spec, initialize MUST respond with a version the server supports:
+# a supported request is echoed, anything else gets our default. 2025-03-26 is
+# deliberately absent: that revision requires JSON-RPC batch support, which
+# this server rejects by design.
 _PROTOCOL_VERSION = "2025-06-18"
+_SUPPORTED_PROTOCOL_VERSIONS = frozenset({"2024-11-05", _PROTOCOL_VERSION})
 
 TOOLS = [
     {
@@ -312,8 +317,9 @@ class _Server:
 
     def _initialize(self, params: dict) -> dict:
         requested = params.get("protocolVersion")
+        negotiated = requested if requested in _SUPPORTED_PROTOCOL_VERSIONS else _PROTOCOL_VERSION
         return {
-            "protocolVersion": requested if isinstance(requested, str) else _PROTOCOL_VERSION,
+            "protocolVersion": negotiated,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "wikimoth", "version": __version__},
         }

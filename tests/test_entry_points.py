@@ -14,19 +14,20 @@ from __future__ import annotations
 import importlib
 from importlib.metadata import entry_points
 
+_DIST = "wikimoth"
 
-def _wikimoth_console_scripts():
-    eps = entry_points()
-    group = (eps.select(group="console_scripts")
-             if hasattr(eps, "select") else eps.get("console_scripts", []))
-    return [ep for ep in group if ep.value.split(":")[0].split(".")[0] == "wikimoth"]
+
+def _console_scripts():
+    # requires-python >= 3.10, where entry_points() supports keyword selection.
+    return [ep for ep in entry_points(group="console_scripts")
+            if ep.value.split(":")[0].split(".")[0] == _DIST]
 
 
 def check_console_scripts() -> list[str]:
     failures: list[str] = []
-    scripts = _wikimoth_console_scripts()
+    scripts = _console_scripts()
     if not scripts:
-        return ["no wikimoth console_scripts found in the installed distribution"]
+        return [f"no {_DIST} console_scripts found in the installed distribution"]
     for ep in scripts:
         module_path, _, attr = ep.value.partition(":")
         try:
@@ -55,5 +56,5 @@ if __name__ == "__main__":
         for f in fails:
             print("  -", f)
         sys.exit(1)
-    print(f"OK: {len(_wikimoth_console_scripts())} wikimoth console script(s) resolve")
+    print(f"OK: {len(_console_scripts())} {_DIST} console script(s) resolve")
     sys.exit(0)

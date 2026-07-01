@@ -1,0 +1,42 @@
+{
+  "name": "wikimoth-mcp",
+  "version": "0.2.1",
+  "description": "npx launcher for the WikiMoth MCP server: deterministic, token-minimal memory for Claude and agents over a [[wikilink]] markdown vault. Spawns the Python `wikimoth mcp` stdio server, self-healing via uvx.",
+  "bin": {
+    "wikimoth-mcp": "bin.js"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "wikimoth",
+    "memory",
+    "agent-memory",
+    "claude",
+    "cursor",
+    "rag",
+    "wikilinks"
+  ],
+  "license": "Apache-2.0",
+  "author": "Julian Geymonat",
+  "homepage": "https://github.com/juliangeymonat-jpg/wikimoth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juliangeymonat-jpg/wikimoth.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/juliangeymonat-jpg/wikimoth/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

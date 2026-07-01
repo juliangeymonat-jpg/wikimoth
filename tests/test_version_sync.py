@@ -46,6 +46,7 @@ _MANIFESTS = (
      lambda: _json_version("plugin/.claude-plugin/plugin.json")),
     (".claude-plugin/marketplace.json", _marketplace_version),
     ("npm/package.json", lambda: _json_version("npm/package.json")),
+    ("server.json", lambda: _json_version("server.json")),
 )
 
 

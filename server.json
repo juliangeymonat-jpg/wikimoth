@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.juliangeymonat-jpg/wikimoth",
+  "description": "Deterministic, token-minimal memory for Claude and agents over a [[wikilink]] markdown vault: multi-hop recall with no LLM call in the retrieval loop, local and private, pure-stdlib Python. Tools: recall, status, plus a memory-hygiene suite (conflicts, lint, duplicates, fading, supersede).",
+  "repository": {
+    "url": "https://github.com/juliangeymonat-jpg/wikimoth",
+    "source": "github"
+  },
+  "websiteUrl": "https://wikimoth.com",
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "wikimoth",
+      "version": "0.2.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "WIKIMOTH_VAULT",
+          "description": "Absolute path to the [[wikilink]] markdown vault to serve (the folder wikimoth install captures into).",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    },
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "wikimoth-mcp",
+      "version": "0.2.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "WIKIMOTH_VAULT",
+          "description": "Absolute path to the [[wikilink]] markdown vault to serve.",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "WIKIMOTH_PYTHON",
+          "description": "Optional: pin the exact Python interpreter that has wikimoth installed.",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

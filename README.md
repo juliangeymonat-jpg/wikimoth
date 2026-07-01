@@ -139,6 +139,18 @@ Step 2 is the check that matters: if `python -m wikimoth status` prints a status
 `python -m wikimoth mcp` will run for Claude too. Use the **same `python`** in all three steps (it is
 `python3` on some systems); that is the one thing that has to match.
 
+Prefer the Node world, or no Python set up? One line, no toolchain matching:
+
+```bash
+claude mcp add wikimoth -- npx -y wikimoth-mcp
+```
+
+The [`wikimoth-mcp`](https://www.npmjs.com/package/wikimoth-mcp) launcher finds a Python that has
+WikiMoth (or `uvx`-installs one on the fly), injects the vault path so the server never reads an
+empty folder from the client's working directory, and passes the MCP channel through untouched. The
+same `npx -y wikimoth-mcp` works as the server command in any `mcpServers` config (Claude Desktop,
+Cursor, Windsurf); set `WIKIMOTH_VAULT` to your vault.
+
 Now Claude has a `recall(query)` tool. Ask it something that lives in your notes and it calls
 `recall`; WikiMoth walks the `[[links]]` and hands back the exact note-chain (no LLM call to
 retrieve, token-minimal, the same result every time), and Claude answers from it. A `status` tool
@@ -148,6 +160,8 @@ command (stdio transport); point it at a specific vault with `--vault PATH`.
 `python -m wikimoth mcp` is the portable form (it runs wherever the package is installed). The bare
 `wikimoth mcp` works too when the console script is on your PATH. It is pure stdlib: a hand-rolled
 JSON-RPC 2.0 stdio server, no MCP SDK dependency.
+
+mcp-name: io.github.juliangeymonat-jpg/wikimoth
 
 ## Capture: sessions → notes (the write half)
 

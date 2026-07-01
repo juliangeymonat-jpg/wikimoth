@@ -31,7 +31,7 @@ Claude Desktop / Cursor / Windsurf (`mcpServers` config):
 }
 ```
 
-The server exposes `recall`, `status`, and the memory-hygiene tools (`list_conflicts`, `list_lint`, `list_duplicates`, `list_fading`, `supersede`).
+The server exposes `recall` and `status`; with WikiMoth 0.2+ it also exposes the memory-hygiene tools (`list_conflicts`, `list_lint`, `list_duplicates`, `list_fading`, `supersede`). The launcher warns on stderr when it finds an older WikiMoth (`pip install -U wikimoth` to upgrade).
 
 ## Vault resolution
 
@@ -45,12 +45,12 @@ and injects the resolved absolute path into the server's environment, printing i
 
 ## Environment variables
 
-- `WIKIMOTH_VAULT` — the vault directory to serve (recommended).
-- `WIKIMOTH_PYTHON` — pin the exact Python interpreter to run (skips auto-detection).
+- `WIKIMOTH_VAULT`: the vault directory to serve (recommended).
+- `WIKIMOTH_PYTHON`: pin the exact Python interpreter to run. The pin is trusted verbatim and skips auto-detection entirely; a wrong pin fails loudly at server start.
 
 ## How it works
 
-The launcher looks for a Python that can `import wikimoth` (`WIKIMOTH_PYTHON`, then `python3`, `python`, and on Windows the `py -3` launcher) and runs `python -m wikimoth mcp`. If none is found it falls back to `uvx --from 'wikimoth>=0.2,<0.3' wikimoth mcp` (an ephemeral install; the **first** such run downloads WikiMoth, so it may exceed a strict client startup timeout — `pip install wikimoth` ahead of time avoids this). `stdin`/`stdout` are passed through untouched (the MCP JSON-RPC channel); all launcher diagnostics go to `stderr`.
+Without a pin, the launcher looks for a Python that can `import wikimoth` (`python3`, `python`, and on Windows the `py -3` launcher; `.cmd`/`.bat` shims are supported) and runs `python -m wikimoth mcp`. If none is found it falls back to `uvx --from 'wikimoth>=0.2,<0.3' wikimoth mcp` (an ephemeral install; the **first** such run downloads WikiMoth, so it may exceed a strict client startup timeout, and `pip install wikimoth` ahead of time avoids this). `stdin`/`stdout` are passed through untouched (the MCP JSON-RPC channel); all launcher diagnostics go to `stderr`.
 
 This launcher is version-independent from the Python package: it runs whatever WikiMoth is installed (or `uvx`-installs a compatible one), so its own npm version does not track the Python release.
 

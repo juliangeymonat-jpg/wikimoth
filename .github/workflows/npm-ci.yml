@@ -1,0 +1,44 @@
+name: npm launcher CI
+
+# The npm launcher gets the same released-artifact discipline as the Python
+# package: syntax-check, pack the tarball, and run a real MCP handshake
+# through bin.js against a pip-installed wikimoth before anything publishes.
+
+on:
+  push:
+    branches: [main]
+    paths: ["npm/**", ".github/workflows/npm-ci.yml"]
+  pull_request:
+    paths: ["npm/**", ".github/workflows/npm-ci.yml"]
+
+jobs:
+  smoke:
+    name: launcher smoke (node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["18", "20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Syntax check
+        run: node --check npm/bin.js
+      - name: Pack tarball (verify the files allowlist)
+        run: |
+          cd npm
+          npm pack --dry-run
+      - name: Install wikimoth and run the MCP handshake through the launcher
+        run: |
+          python -m pip install --upgrade pip
+          pip install wikimoth
+          node npm/ci-smoke.js "$(which python)"
+      - name: Handshake via auto-detection (no pin)
+        run: node npm/ci-smoke.js

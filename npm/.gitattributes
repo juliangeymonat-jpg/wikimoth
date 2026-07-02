@@ -1,0 +1,5 @@
+# The launcher is executed via a `#!/usr/bin/env node` shebang. A CRLF after the
+# shebang breaks execution on POSIX, and this repo is often edited on Windows, so
+# force LF for JS regardless of the contributor's core.autocrlf setting.
+*.js text eol=lf
+bin.js text eol=lf

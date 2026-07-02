@@ -68,7 +68,9 @@ def test_tools_list(tmp_path):
     s = _Server(_vault(tmp_path))
     resp = s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = {t["name"] for t in resp["result"]["tools"]}
-    assert names == {"recall", "status"}
+    assert names == {
+        "recall", "status", "list_conflicts", "list_lint", "list_duplicates", "list_fading", "supersede",
+    }
     recall = next(t for t in TOOLS if t["name"] == "recall")
     assert recall["inputSchema"]["required"] == ["query"]
 
@@ -126,6 +128,26 @@ def test_recall_missing_vault_is_error(tmp_path):
     assert "No WikiMoth vault" in res["content"][0]["text"]
 
 
+def test_recall_bad_as_of_is_error(tmp_path):
+    s = _Server(_vault(tmp_path))
+    res = _call(s, name="recall", arguments={"query": "topicZ9", "as_of": "nope"})["result"]
+    assert res["isError"] is True
+    assert "YYYY-MM-DD" in res["content"][0]["text"]
+
+
+def test_recall_default_view_hides_superseded(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "old.md").write_text(
+        '---\nname: old\nsuperseded_by: "[[new]]"\nstatus: superseded\nvalid_to: 2026-06-20\n---\ntopicZ9 OLDBODY.\n',
+        encoding="utf-8",
+    )
+    (v / "new.md").write_text("---\nname: new\n---\ntopicZ9 NEWBODY.\n", encoding="utf-8")
+    s = _Server(v)
+    txt = _call(s, name="recall", arguments={"query": "topicZ9"})["result"]["content"][0]["text"]
+    assert "OLDBODY" not in txt and "NEWBODY" in txt
+
+
 def test_recall_respects_top_k(tmp_path):
     s = _Server(_vault(tmp_path))
     res = _call(s, name="recall", arguments={"query": "topicZ9", "top_k": 1})["result"]
@@ -150,6 +172,148 @@ def test_status_reports_vault(tmp_path):
     assert str(v) in text
     assert "notes: 4" in text  # alpha, beta, gamma, noise
     assert "token backend:" in text
+
+
+# ---------------------------------------------------------------------------
+# list_conflicts
+# ---------------------------------------------------------------------------
+def test_list_conflicts_tool_surfaces_candidate(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "a.md").write_text("---\nname: a\nabout: acme\nceo: alice\n---\n", encoding="utf-8")
+    (v / "b.md").write_text("---\nname: b\nabout: acme\nceo: bob\n---\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="list_conflicts", arguments={})["result"]
+    assert res["isError"] is False
+    text = res["content"][0]["text"]
+    assert "acme" in text and "ceo" in text
+    assert "alice" in text and "bob" in text
+
+
+def test_list_conflicts_clean_vault(tmp_path):
+    # The shared _vault has no conflicting frontmatter -> a clean, consistent report.
+    s = _Server(_vault(tmp_path))
+    res = _call(s, name="list_conflicts", arguments={})["result"]
+    assert res["isError"] is False
+    assert "consistent" in res["content"][0]["text"].lower()
+
+
+def test_list_conflicts_include_inline_arg(tmp_path):
+    # The include_inline arg must thread through to scan_conflicts.
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "a.md").write_text("---\nabout: org\n---\nceo:: alice\n", encoding="utf-8")
+    (v / "b.md").write_text("---\nabout: org\n---\nceo:: bob\n", encoding="utf-8")
+    s = _Server(v)
+    off = _call(s, name="list_conflicts", arguments={})["result"]
+    assert "consistent" in off["content"][0]["text"].lower()  # inline off by default
+    on = _call(s, name="list_conflicts", arguments={"include_inline": True})["result"]
+    assert "ceo" in on["content"][0]["text"] and "alice" in on["content"][0]["text"]
+
+
+def test_list_conflicts_missing_vault_is_error(tmp_path):
+    s = _Server(tmp_path / "does-not-exist")
+    res = _call(s, name="list_conflicts", arguments={})["result"]
+    assert res["isError"] is True
+
+
+# ---------------------------------------------------------------------------
+# list_lint
+# ---------------------------------------------------------------------------
+def test_list_lint_surfaces_broken_link(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "a.md").write_text("---\nname: a\n---\nSee [[ghost]].\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="list_lint", arguments={})["result"]
+    assert res["isError"] is False
+    assert "ghost" in res["content"][0]["text"]
+
+
+def test_list_lint_clean_vault(tmp_path):
+    s = _Server(_vault(tmp_path))  # alpha->beta->gamma chain, gamma is a leaf
+    res = _call(s, name="list_lint", arguments={})["result"]
+    assert res["isError"] is False
+
+
+def test_list_lint_missing_vault_is_error(tmp_path):
+    s = _Server(tmp_path / "does-not-exist")
+    res = _call(s, name="list_lint", arguments={})["result"]
+    assert res["isError"] is True
+
+
+# ---------------------------------------------------------------------------
+# list_duplicates
+# ---------------------------------------------------------------------------
+def test_list_duplicates_tool(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    dup = "The shared body text that appears verbatim in two different note files here."
+    (v / "a.md").write_text(f"---\nname: a\n---\n{dup}\n", encoding="utf-8")
+    (v / "b.md").write_text(f"---\nname: b\n---\n{dup}\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="list_duplicates", arguments={})["result"]
+    assert res["isError"] is False
+    assert "a.md" in res["content"][0]["text"] and "b.md" in res["content"][0]["text"]
+
+
+def test_list_duplicates_clean_vault(tmp_path):
+    s = _Server(_vault(tmp_path))
+    res = _call(s, name="list_duplicates", arguments={})["result"]
+    assert res["isError"] is False
+
+
+# ---------------------------------------------------------------------------
+# list_fading
+# ---------------------------------------------------------------------------
+def test_list_fading_tool(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "old.md").write_text("---\nname: old\nlast_access: 2000-01-01\n---\nancient note.\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="list_fading", arguments={})["result"]
+    assert res["isError"] is False
+    assert "old.md" in res["content"][0]["text"]
+
+
+def test_list_fading_missing_vault_is_error(tmp_path):
+    s = _Server(tmp_path / "does-not-exist")
+    res = _call(s, name="list_fading", arguments={})["result"]
+    assert res["isError"] is True
+
+
+# ---------------------------------------------------------------------------
+# supersede (write tool)
+# ---------------------------------------------------------------------------
+def test_supersede_tool_marks_old(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "old.md").write_text("---\nname: old\n---\nbody\n", encoding="utf-8")
+    (v / "new.md").write_text("---\nname: new\n---\nbody\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="supersede", arguments={"old": "old", "new": "new"})["result"]
+    assert res["isError"] is False
+    from wikimoth.frontmatter import parse_frontmatter
+
+    fm = parse_frontmatter((v / "old.md").read_text(encoding="utf-8"))
+    assert fm["superseded_by"] == "[[new]]"
+
+
+def test_supersede_tool_missing_args_is_error(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    s = _Server(v)
+    res = _call(s, name="supersede", arguments={"old": "x"})["result"]
+    assert res["isError"] is True
+
+
+def test_supersede_tool_unresolved_is_error(tmp_path):
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "new.md").write_text("---\nname: new\n---\nbody\n", encoding="utf-8")
+    s = _Server(v)
+    res = _call(s, name="supersede", arguments={"old": "ghost", "new": "new"})["result"]
+    assert res["isError"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ from typing import Mapping
 
 from wikimoth.capture.config import CaptureConfig
 from wikimoth.capture.links import is_session_stem
+from wikimoth.frontmatter import split_frontmatter, unquote_scalar
 
 _DESC_RE = re.compile(r"^description:\s*(.*)$", re.MULTILINE)
 _WIKILINK = re.compile(r"\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]")
@@ -27,17 +28,9 @@ _WIKILINK = re.compile(r"\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]")
 
 def _frontmatter_description(text: str) -> str:
     """Pull the ``description:`` scalar out of a note's YAML frontmatter."""
-    if not text.startswith("---"):
-        return ""
-    end = text.find("\n---", 3)
-    head = text[: end if end != -1 else len(text)]
-    m = _DESC_RE.search(head)
-    if not m:
-        return ""
-    val = m.group(1).strip()
-    if len(val) >= 2 and val[0] == '"' and val[-1] == '"':
-        val = val[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    return val
+    block, _ = split_frontmatter(text)
+    m = _DESC_RE.search(block)
+    return unquote_scalar(m.group(1)) if m else ""
 
 
 def _links(text: str, limit: int = 6) -> list[str]:

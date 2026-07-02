@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikimoth"
-version = "0.1.5"
+version = "0.2.1"
 description = "Deterministic, token-minimal, reproducible memory for Claude and agents: wikilink-graph retrieval, then compaction, then a Claude reader."
 readme = "README.md"
 requires-python = ">=3.10"

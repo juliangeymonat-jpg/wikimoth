@@ -211,3 +211,19 @@ def test_ask_clamps_nonpositive_top_k(served):
     model, rag = served
     body = render_ask(rag, model, "quokka", top_k=0)
     assert "alpha.md" in body  # still returns the seed, no crash, no over-return
+
+
+def test_render_note_flags_superseded(tmp_path):
+    v = tmp_path / "v"
+    v.mkdir()
+    (v / "old.md").write_text(
+        '---\nname: old\nsuperseded_by: "[[new]]"\nstatus: superseded\n---\nold body\n',
+        encoding="utf-8",
+    )
+    (v / "new.md").write_text("---\nname: new\n---\nnew body\n", encoding="utf-8")
+    model = VaultModel.from_dir(v)
+    status, page = render_note(model, "old")
+    assert status == 200
+    assert "Superseded" in page  # the browser flags a recall-hidden note
+    _, page_new = render_note(model, "new")
+    assert "Superseded" not in page_new

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
+from wikimoth.frontmatter import parse_frontmatter
 from wikimoth.retrieval.graph import _WIKILINK_RE, _slugify
 from wikimoth.tokens import count_passage_tokens, token_backend
 
@@ -248,14 +249,32 @@ def render_note(model: VaultModel, slug: str) -> tuple[int, str]:
         )
         or "<li class=muted>none</li>"
     )
+    # Browser shows every note, but flag the ones recall now hides so the view
+    # is not silently inconsistent with /ask.
+    fm = parse_frontmatter(note.text)
+    banner = ""
+    sup = fm.get("superseded_by", "")
+    if sup or fm.get("status") == "superseded":
+        m = _WIKILINK_RE.search(sup)
+        link = (
+            f" by <a href='/note?slug={_q(_slugify(m.group(1)))}'>{html.escape(m.group(1))}</a>"
+            if m else ""
+        )
+        banner = (
+            "<div class=banner style='background:#fee;border:1px solid #f99;"
+            "padding:8px;border-radius:6px;margin-bottom:10px'>"
+            f"Superseded{link}. Hidden from recall in the current view; the file is "
+            "kept as the audit trail.</div>"
+        )
     body = (
         f"<p><a href='/'>&larr; notes</a></p>"
+        f"{banner}"
         f"<h2>{html.escape(note.filename)}</h2>"
         f"<p class=muted>{note.tokens} tokens · {len(note.links)} outgoing · {len(note.backlinks)} backlinks</p>"
         f"<div class=note-body>{_linkify(note.text)}</div>"
         f"<h3>Backlinks</h3><ul>{backlinks}</ul>"
     )
-    return 200, _page(f"WikiMoth — {note.filename}", body)
+    return 200, _page(f"WikiMoth note: {note.filename}", body)
 
 
 def render_graph(model: VaultModel, *, max_nodes: int = 200) -> str:

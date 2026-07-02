@@ -46,12 +46,26 @@ in :mod:`wikimoth.retrieval` (zero ``mothrag`` dependency).
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from wikimoth.compaction import Compactor, NoOpCompactor
 from wikimoth.reader import EchoReader, Reader
 from wikimoth.tokens import count_passage_tokens, token_backend
+
+
+def _parse_iso_date(s: Any) -> date | None:
+    """Parse a full ISO date string (``YYYY-MM-DD``); fail-open to ``None``."""
+    if not isinstance(s, str):
+        return None
+    s = s.strip()[:10]
+    if len(s) != 10:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
 
 # MOTHRAG's ingest convention (reused, not reinvented): notes are split into
 # ~CHUNK_SIZE_TOKENS-token chunks with CHUNK_OVERLAP_TOKENS overlap.
@@ -113,13 +127,25 @@ def _fallback_word_chunk(
     return out
 
 
-def _make_chunk(*, text: str, note_slug: str, idx: int, filename: str, source: str) -> Any:
+def _make_chunk(
+    *,
+    text: str,
+    note_slug: str,
+    idx: int,
+    filename: str,
+    source: str,
+    superseded: bool = False,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+) -> Any:
     """Build a MOTHRAG ``Chunk`` with chunk-level, note-preserving identity.
 
     ``doc_id`` is the note slug and ``chunk_id`` is ``f"{slug}#chunk{idx}"`` —
     exactly the shape ``GraphRetriever._note_identity`` strips back to a note,
     so every chunk of a note shares one graph node-identity and wikilinks still
-    resolve at chunk granularity.
+    resolve at chunk granularity. The bitemporal/supersession fields are stamped
+    on EVERY chunk of a note (not just chunk 0) so the as-of filter is correct for
+    multi-chunk notes.
     """
     from wikimoth.retrieval.chunk import Chunk
 
@@ -131,6 +157,9 @@ def _make_chunk(*, text: str, note_slug: str, idx: int, filename: str, source: s
             "source": source,
             "filename": filename,
             "note_slug": note_slug,
+            "superseded": superseded,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
         },
     )
 
@@ -160,6 +189,8 @@ def _load_vault_chunks(
     if not vault.exists():
         raise FileNotFoundError(f"vault_dir not found: {vault}")
 
+    from wikimoth.frontmatter import parse_frontmatter
+
     exclude_slugs = {_slugify_note(n) for n in exclude_content}
 
     chunks: list[Any] = []
@@ -169,6 +200,10 @@ def _load_vault_chunks(
         source = str(p)
 
         excluded = note_slug in exclude_slugs
+        fm = parse_frontmatter(text)
+        superseded = bool(fm.get("superseded_by")) or fm.get("status") == "superseded"
+        valid_from = fm.get("valid_from")
+        valid_to = fm.get("valid_to")
 
         parts = _chunk_text(text)
         if not parts:
@@ -182,6 +217,9 @@ def _load_vault_chunks(
                 idx=i,
                 filename=p.name,
                 source=source,
+                superseded=superseded,
+                valid_from=valid_from,
+                valid_to=valid_to,
             )
             if excluded:
                 # Edges-only hub: its chunks stay in the GRAPH (full text, so
@@ -237,6 +275,8 @@ class MemoryRAG:
         compactor: Compactor | None = None,
         reader: Reader | None = None,
         exclude_content: Iterable[str] = DEFAULT_EXCLUDE_CONTENT,
+        as_of: date | None = None,
+        show_superseded: bool = False,
     ) -> None:
         self.retriever = retriever if retriever is not None else _default_retriever()
         self.compactor = compactor if compactor is not None else NoOpCompactor()
@@ -244,6 +284,13 @@ class MemoryRAG:
         self.exclude_content = tuple(exclude_content)
         self._exclude_slugs = {_slugify_note(n) for n in self.exclude_content}
         self._indexed = False
+        # Supersession-aware / bitemporal retrieval (mutable per request):
+        #   as_of=None           -> current view: drop superseded + expired bodies
+        #   as_of=<date D>       -> time-travel: show what was valid at D
+        #   show_superseded=True -> forensic: keep everything
+        self.as_of = as_of
+        self.show_superseded = show_superseded
+        self._n_droppable = 0
 
     # ------------------------------------------------------------------
     # Excluded-content bookkeeping
@@ -259,9 +306,52 @@ class MemoryRAG:
         )
         return slug in self._exclude_slugs
 
-    def _drop_excluded(self, chunks: Sequence[Any]) -> list[Any]:
-        """Filter excluded-note chunks out of a retrieval result."""
-        return [c for c in chunks if not self._is_excluded(c)]
+    def _is_visible(self, chunk: Any) -> bool:
+        """Supersession-/as-of-aware visibility of a chunk's body in the result.
+
+        The chunk stays in the GRAPH either way (so its ``[[NEW]]`` edge is live and
+        a query hitting a superseded note hops one edge to the current one); this
+        only controls whether its BODY reaches the reader. Fail-open: an unparseable
+        date never hides a chunk.
+        """
+        if self.show_superseded:
+            return True
+        meta = getattr(chunk, "metadata", None) or {}
+        vf = _parse_iso_date(meta.get("valid_from"))
+        vt = _parse_iso_date(meta.get("valid_to"))
+        # The reference instant: today for the current view, or the as-of date for
+        # time-travel. A fact is valid at T iff valid_from <= T < valid_to.
+        t = self.as_of if self.as_of is not None else date.today()
+        valid_at_t = (vf is None or vf <= t) and (vt is None or t < vt)
+        if self.as_of is not None:
+            # time-travel: only the validity window matters (the supersession flag
+            # is a "now" concept; at T the replacement may not have happened yet).
+            return valid_at_t
+        # current view: valid right now AND not superseded.
+        return valid_at_t and not meta.get("superseded")
+
+    def _keep(self, chunk: Any) -> bool:
+        """A chunk's body reaches the reader iff it is neither excluded nor hidden."""
+        return not self._is_excluded(chunk) and self._is_visible(chunk)
+
+    def _count_droppable(self, chunks: Sequence[Any]) -> int:
+        """Over-fetch headroom: how many chunks the keep-filter drops in the current
+        view. Counts only chunks actually hidden NOW (excluded, superseded, or
+        outside today's validity window) rather than every dated note, so a vault
+        of currently-valid dated notes does not inflate every query's fetch."""
+        today = date.today()
+        n = 0
+        for c in chunks:
+            meta = getattr(c, "metadata", None) or {}
+            if self._is_excluded(c) or meta.get("superseded"):
+                n += 1
+                continue
+            vf = _parse_iso_date(meta.get("valid_from"))
+            vt = _parse_iso_date(meta.get("valid_to"))
+            valid_now = (vf is None or vf <= today) and (vt is None or today < vt)
+            if not valid_now:
+                n += 1
+        return n
 
     # ------------------------------------------------------------------
     # Index
@@ -278,6 +368,7 @@ class MemoryRAG:
         """
         chunks = _load_vault_chunks(vault_dir, exclude_content=self.exclude_content)
         self.retriever.index(chunks)
+        self._n_droppable = self._count_droppable(chunks)
         self._indexed = True
         return self
 
@@ -289,7 +380,9 @@ class MemoryRAG:
         note slug); the chunks are passed to the retriever verbatim so its
         graph still sees the excluded notes' edges.
         """
-        self.retriever.index(list(chunks))
+        chunks = list(chunks)
+        self.retriever.index(chunks)
+        self._n_droppable = self._count_droppable(chunks)
         self._indexed = True
         return self
 
@@ -322,26 +415,25 @@ class MemoryRAG:
         if callable(fn):
             fetch = self._fetch_k(top_k)
             pairs = fn(question, top_k=fetch)
-            kept = [(c, hop) for c, hop in pairs if not self._is_excluded(c)]
+            kept = [(c, hop) for c, hop in pairs if self._keep(c)]
             return kept[:top_k]
         chunks = self._retrieve_filtered(question, top_k=top_k)
         return [(c, -1) for c in chunks]
 
     def _fetch_k(self, top_k: int) -> int:
-        """Over-fetch budget so dropping excluded chunks still yields ``top_k``.
+        """Over-fetch budget so dropping hidden/excluded chunks still yields ``top_k``.
 
-        With no excluded notes this is exactly ``top_k``; otherwise it adds head
-        room for the hub chunks the retriever may surface and we then drop.
+        Headroom = the number of chunks the keep-filter could drop (excluded hubs +
+        superseded + dated). With a plain vault this is ``top_k``; an as-of /
+        supersession filter that drops many chunks no longer starves the result.
         """
-        if not self._exclude_slugs:
-            return top_k
-        return top_k + max(len(self._exclude_slugs), 1)
+        return top_k + self._n_droppable
 
     def _retrieve_filtered(self, question: str, *, top_k: int) -> list[Any]:
-        """Retrieve, drop excluded-content chunks, trim to ``top_k``."""
+        """Retrieve, drop excluded/hidden chunks, trim to ``top_k``."""
         fetch = self._fetch_k(top_k)
         chunks = self.retriever.retrieve(question, top_k=fetch)
-        return self._drop_excluded(chunks)[:top_k]
+        return [c for c in chunks if self._keep(c)][:top_k]
 
     # ------------------------------------------------------------------
     # Answer (retrieve → compact → read)

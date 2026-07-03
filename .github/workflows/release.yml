@@ -5,10 +5,15 @@ name: release
 # survive the same released-artifact acceptance gate CI runs (via the shared
 # scripts/acceptance.sh, so the two gates cannot drift).
 #
-# Publish uses PyPI Trusted Publishing (OIDC), no stored token. One-time setup
-# on PyPI: project -> Manage -> Publishing -> add a GitHub Actions publisher
-# (owner: juliangeymonat-jpg, repo: wikimoth, workflow: release.yml,
-# environment: pypi). Until then, only the `publish` job is blocked.
+# Publish uses Trusted Publishing (OIDC) on BOTH registries, no stored tokens.
+# One-time setup:
+# - PyPI: project -> Manage -> Publishing -> add a GitHub Actions publisher
+#   (owner: juliangeymonat-jpg, repo: wikimoth, workflow: release.yml,
+#   environment: pypi).
+# - npm: package wikimoth-mcp -> Settings -> Trusted Publisher -> GitHub Actions
+#   (organization or user: juliangeymonat-jpg, repository: wikimoth,
+#   workflow filename: release.yml, environment: npm).
+# Until then, only the publish jobs are blocked; build-verify still gates.
 
 on:
   push:
@@ -59,3 +64,32 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    name: publish launcher to npm (trusted publishing)
+    needs: build-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Check the tag matches the launcher version
+        run: |
+          VER=$(node -p "require('./npm/package.json').version")
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match npm/package.json v$VER"; exit 1
+          fi
+      - name: npm >= 11.5.1 (required for OIDC trusted publishing)
+        run: |
+          npm install -g npm@latest
+          npm --version
+      - run: node --check npm/bin.js
+      - name: Publish (OIDC, provenance automatic)
+        run: npm publish
+        working-directory: npm

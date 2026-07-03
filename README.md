@@ -8,6 +8,11 @@
 
 **[wikimoth.com](https://wikimoth.com)** · `pip install wikimoth`
 
+[![CI](https://github.com/juliangeymonat-jpg/wikimoth/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/juliangeymonat-jpg/wikimoth/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/wikimoth)](https://pypi.org/project/wikimoth/)
+[![npm](https://img.shields.io/npm/v/wikimoth-mcp)](https://www.npmjs.com/package/wikimoth-mcp)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 **Deterministic, token-minimal, auditable memory for Claude and agents.** Point WikiMoth at a
 folder of `[[wikilink]]` notes (an Obsidian vault, or Claude's own memory folder) and it
 follows the authored links to the answer flat search can't reach, shows you the exact note-chain

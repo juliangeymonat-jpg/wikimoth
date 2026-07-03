@@ -5,7 +5,8 @@
 Fails when wikimoth.__version__, the installed distribution metadata, and the
 version-bearing manifests disagree -- the drift that left the Claude Code
 plugin manifests advertising 0.1.0 while the package shipped 0.2.0. Covered
-manifests: both plugin JSONs and (when present) the npm launcher package.json.
+manifests (when present on the checkout): both plugin JSONs, the npm launcher
+package.json, the MCP registry server.json, and CITATION.cff.
 Runnable standalone::
 
     python tests/test_version_sync.py
@@ -13,6 +14,7 @@ Runnable standalone::
 from __future__ import annotations
 
 import json
+import re
 from importlib.metadata import version as dist_version
 from pathlib import Path
 
@@ -39,6 +41,14 @@ def _marketplace_version() -> str | None:
     return None
 
 
+def _citation_version() -> str | None:
+    p = _ROOT / "CITATION.cff"
+    if not p.exists():
+        return None
+    m = re.search(r'^version:\s*["\']?([^"\'\n]+)', p.read_text(encoding="utf-8"), re.M)
+    return m.group(1).strip() if m else None
+
+
 # (label, getter) for every version-bearing file; getters return None when the
 # file is not on this checkout (e.g. running from the installed wheel).
 _MANIFESTS = (
@@ -47,6 +57,7 @@ _MANIFESTS = (
     (".claude-plugin/marketplace.json", _marketplace_version),
     ("npm/package.json", lambda: _json_version("npm/package.json")),
     ("server.json", lambda: _json_version("server.json")),
+    ("CITATION.cff", _citation_version),
 )
 
 

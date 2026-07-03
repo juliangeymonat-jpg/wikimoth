@@ -6,6 +6,7 @@ __pycache__/
 /dist/
 /build/
 .memoth/
+.wikimoth/
 # secrets / local API keys — NEVER commit (key never leaves this machine)
 .env
 .env.*

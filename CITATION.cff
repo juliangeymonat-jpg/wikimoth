@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: "WikiMoth: deterministic, token-minimal agent memory over [[wikilink]] vaults"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Geymonat
+    given-names: Julian
+repository-code: "https://github.com/juliangeymonat-jpg/wikimoth"
+url: "https://wikimoth.com"
+license: Apache-2.0
+version: "0.2.1"
+date-released: "2026-07-02"
+keywords:
+  - agent memory
+  - retrieval
+  - wikilinks
+  - multi-hop
+  - model context protocol

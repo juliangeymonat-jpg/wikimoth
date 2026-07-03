@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "wikimoth",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "source": "./plugin",
       "description": "Deterministic, token-minimal memory for Claude Code: capture each session as a [[wikilink]] note (edges computed by code, not a model) and recall connected notes at boot."
     }

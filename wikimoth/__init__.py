@@ -16,7 +16,7 @@ from wikimoth.pipeline import MemoryRAG
 from wikimoth.reader import ClaudeReader, EchoReader, Reader
 from wikimoth.tokens import count_passage_tokens, count_tokens, token_backend
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 __all__ = [
     "MemoryRAG",

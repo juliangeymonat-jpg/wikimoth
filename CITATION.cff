@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/juliangeymonat-jpg/wikimoth"
 url: "https://wikimoth.com"
 license: Apache-2.0
-version: "0.2.1"
-date-released: "2026-07-02"
+version: "0.2.2"
+date-released: "2026-07-03"
 keywords:
   - agent memory
   - retrieval

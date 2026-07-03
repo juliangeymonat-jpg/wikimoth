@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.juliangeymonat-jpg/wikimoth",
-  "description": "Deterministic, token-minimal memory for Claude and agents over a [[wikilink]] markdown vault: multi-hop recall with no LLM call in the retrieval loop, local and private, pure-stdlib Python. Tools: recall, status, plus a memory-hygiene suite (conflicts, lint, duplicates, fading, supersede).",
+  "description": "Deterministic, token-minimal agent memory: multi-hop [[wikilink]] recall with no LLM in the loop.",
   "repository": {
     "url": "https://github.com/juliangeymonat-jpg/wikimoth",
     "source": "github"

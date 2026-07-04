@@ -37,6 +37,15 @@ def _settings_path(args) -> Path:
     return base / ".claude" / "settings.json"
 
 
+def _bad_top_k(args) -> int | None:
+    """Uniform --top-k validation across serve/mcp/recall. Returns an exit code
+    to propagate on a bad value, or None when it is fine."""
+    if getattr(args, "top_k", 1) < 1:
+        print("--top-k must be a positive integer.", file=sys.stderr)
+        return 2
+    return None
+
+
 def _cmd_install(args) -> int:
     path = _settings_path(args)
     summary = _install.install(path, vault_dir=args.vault)
@@ -104,9 +113,8 @@ def _cmd_serve(args) -> int:
     from wikimoth.capture.config import CaptureConfig
     from wikimoth import viewer
 
-    if args.top_k < 1:
-        print("--top-k must be a positive integer.")
-        return 1
+    if (rc := _bad_top_k(args)) is not None:
+        return rc
     if args.vault:
         vault = Path(args.vault)
     else:
@@ -122,6 +130,8 @@ def _cmd_serve(args) -> int:
 def _cmd_mcp(args) -> int:
     from wikimoth import mcp
 
+    if (rc := _bad_top_k(args)) is not None:
+        return rc
     if args.vault:
         vault = Path(args.vault)
     else:
@@ -130,7 +140,12 @@ def _cmd_mcp(args) -> int:
     # stdout is the MCP protocol channel: diagnostics go to stderr ONLY, never stdout.
     print(f"wikimoth mcp: serving vault {vault} over stdio (top_k={args.top_k})", file=sys.stderr)
     if not vault.is_dir():
-        print(f"  note: {vault} does not exist yet; recall reports this until it does.", file=sys.stderr)
+        print(
+            f"  note: {vault} does not exist yet. Set WIKIMOTH_VAULT to an absolute "
+            "vault path (or pass --vault PATH) to point elsewhere; recall reports "
+            "this until the vault exists.",
+            file=sys.stderr,
+        )
     return mcp.serve_stdio(vault, default_top_k=args.top_k)
 
 
@@ -195,6 +210,8 @@ def _cmd_recall(args) -> int:
         print(f"vault not found (or not a directory): {vault}")
         print("  capture some notes first (wikimoth install), or pass --vault PATH.")
         return 1
+    if (rc := _bad_top_k(args)) is not None:
+        return rc
     as_of = None
     if args.as_of:
         try:
@@ -210,6 +227,51 @@ def _cmd_recall(args) -> int:
     fed = sum(per_chunk)
     pct = (100.0 * (1 - fed / total)) if total else 0.0
     print(_format_recall(args.query, pairs, per_chunk, fed, total, pct))
+    return 0
+
+
+def _demo_vault_dir() -> Path:
+    """Absolute path to the bundled demo vault shipped inside the package."""
+    return Path(__file__).resolve().parent / "data" / "demo_vault"
+
+
+# The question's words appear only in the ENTRY notes (invoices/refunds live in
+# billing-service / payments-db), never in the answer note (the region). So flat
+# keyword search cannot surface the answer; WikiMoth reaches it by following the
+# authored [[wikilinks]] outward -- which is the whole point to show.
+_DEMO_QUERY = "Where are our invoices and refunds physically stored?"
+
+
+def _cmd_demo(args) -> int:
+    from wikimoth.pipeline import MemoryRAG, _load_vault_chunks
+    from wikimoth.retrieval.graph import GraphRetriever
+    from wikimoth.tokens import count_passage_tokens
+    from wikimoth.mcp import _format_recall
+
+    vault = _demo_vault_dir()
+    if not vault.is_dir():
+        print(f"demo vault not found at {vault} (reinstall wikimoth).", file=sys.stderr)
+        return 2
+    if (rc := _bad_top_k(args)) is not None:
+        return rc
+    query = args.query or _DEMO_QUERY
+    print(f"wikimoth demo: vault = {vault}", file=sys.stderr)
+    print(f'wikimoth demo: question = "{query}"', file=sys.stderr)
+    print(f"(browse it: wikimoth serve --vault {vault})", file=sys.stderr)
+
+    chunks = _load_vault_chunks(vault)
+    total = count_passage_tokens([getattr(c, "text", "") or "" for c in chunks])
+    # Seed narrowly (2 lexical seeds) and hop up to 2 links, so the answer note
+    # -- which the question does NOT lexically match -- is reached by traversal
+    # and shown with its hop distance, rather than the whole small vault flooding
+    # in as flat seeds.
+    rag = MemoryRAG(retriever=GraphRetriever(source="wikilinks", max_hops=2, seed_top_k=2))
+    rag.index_chunks(chunks)
+    pairs = rag.retrieve_with_hops(query, top_k=args.top_k)
+    per_chunk = [count_passage_tokens([getattr(c, "text", "") or ""]) for c, _ in pairs]
+    fed = sum(per_chunk)
+    pct = (100.0 * (1 - fed / total)) if total else 0.0
+    print(_format_recall(query, pairs, per_chunk, fed, total, pct))
     return 0
 
 
@@ -295,11 +357,16 @@ def _cmd_capture(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wikimoth", description="WikiMoth deterministic memory capture")
     p.add_argument("--version", action="version", version=f"wikimoth {__version__}")
-    sub = p.add_subparsers(dest="command", required=True)
+    # Not required: bare `wikimoth` prints help (exit 0), the friendly first-run
+    # behaviour, instead of an argparse "arguments are required" error (exit 2).
+    sub = p.add_subparsers(dest="command")
 
     def add_scope(sp):
-        sp.add_argument("--user", action="store_true", help="write ~/.claude/settings.json")
-        sp.add_argument("--project", action="store_true", help="write ./.claude/settings.json (default)")
+        # --user and --project are mutually exclusive: passing both used to
+        # silently prefer --user and ignore --project (wrong-scope footgun).
+        scope = sp.add_mutually_exclusive_group()
+        scope.add_argument("--user", action="store_true", help="write ~/.claude/settings.json")
+        scope.add_argument("--project", action="store_true", help="write ./.claude/settings.json (default)")
         sp.add_argument("--dir", help="settings base dir override (expects a .claude/ under it)")
 
     sp_i = sub.add_parser("install", help="install capture hooks")
@@ -359,6 +426,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp_l.add_argument("--include-sessions", action="store_true", help="include session-* notes in orphan/stub/stale checks")
     sp_l.set_defaults(func=_cmd_lint)
 
+    sp_demo = sub.add_parser("demo", help="recall over a bundled demo vault (instant multi-hop, no setup)")
+    sp_demo.add_argument("query", nargs="?", default=None, help="optional question (default: a canned connect-the-dots query)")
+    sp_demo.add_argument("--top-k", type=int, default=8, dest="top_k", help="max note chunks (default 8)")
+    sp_demo.set_defaults(func=_cmd_demo)
+
     sp_r = sub.add_parser("recall", help="recall the note-chain that answers a query (supersession-aware; --as-of time-travel)")
     sp_r.add_argument("query", help="the question or topic to recall")
     sp_r.add_argument("--vault", help="vault dir (default: resolved capture vault)")
@@ -411,7 +483,11 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
         except (ValueError, OSError):  # pragma: no cover - already-detached stream
             pass
-    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if getattr(args, "func", None) is None:
+        parser.print_help()
+        return 0
     return args.func(args)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "wikimoth-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "npx launcher for the WikiMoth MCP server: deterministic, token-minimal memory for Claude and agents over a [[wikilink]] markdown vault. Spawns the Python `wikimoth mcp` stdio server, self-healing via uvx.",
   "mcpName": "io.github.juliangeymonat-jpg/wikimoth",
   "bin": {

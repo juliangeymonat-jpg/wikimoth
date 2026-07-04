@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikimoth"
-version = "0.2.2"
+version = "0.2.3"
 description = "Deterministic, token-minimal, reproducible memory for Claude and agents: wikilink-graph retrieval, then compaction, then a Claude reader."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,6 +48,10 @@ Homepage = "https://github.com/juliangeymonat-jpg/wikimoth"
 
 [tool.setuptools.packages.find]
 include = ["wikimoth*"]
+
+[tool.setuptools.package-data]
+# Ship the bundled demo vault (`wikimoth demo`) inside the wheel.
+wikimoth = ["data/demo_vault/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

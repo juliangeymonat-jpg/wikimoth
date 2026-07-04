@@ -14,10 +14,26 @@ name: release
 #   (organization or user: juliangeymonat-jpg, repository: wikimoth,
 #   workflow filename: release.yml, environment: npm).
 # Until then, only the publish jobs are blocked; build-verify still gates.
+#
+# Publish ordering makes a half-release hard: npm (reversible -- unpublishable
+# within 72h / deprecatable) ships FIRST, and PyPI (immutable -- a version can
+# never be re-uploaded) only runs if npm succeeded. So an npm/OIDC failure
+# blocks PyPI entirely instead of stranding an immutable PyPI-only release.
 
 on:
   push:
     tags: ["v*"]
+
+# Least privilege by default; each publish job escalates to id-token: write.
+permissions:
+  contents: read
+
+# One release pipeline per tag at a time: a deleted-and-re-pushed tag can't
+# race a still-running publish. Do NOT cancel-in-progress (cancelling mid-
+# publish is riskier than serializing).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-verify:
@@ -50,21 +66,7 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
-    name: publish to PyPI (trusted publishing)
-    needs: build-verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
+  # npm first: it is the reversible registry. If it fails, PyPI never runs.
   publish-npm:
     name: publish launcher to npm (trusted publishing)
     needs: build-verify
@@ -85,11 +87,38 @@ jobs:
           if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME does not match npm/package.json v$VER"; exit 1
           fi
-      - name: npm >= 11.5.1 (required for OIDC trusted publishing)
+      - name: Ensure npm >= 11.5.1 (required for OIDC trusted publishing)
         run: |
-          npm install -g npm@latest
+          # node 24 already ships a recent npm; only upgrade (to a pinned floor,
+          # not a moving `@latest`) if it is below the OIDC-capable minimum.
+          need=11.5.1
+          have=$(npm --version)
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            npm install -g 'npm@^11.5.1'
+          fi
           npm --version
       - run: node --check npm/bin.js
       - name: Publish (OIDC, provenance automatic)
         run: npm publish
         working-directory: npm
+
+  # PyPI last: immutable. Only ships once npm has succeeded, so a broken npm
+  # publish can never strand an un-retractable PyPI-only release.
+  publish:
+    name: publish to PyPI (trusted publishing)
+    needs: [build-verify, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run on an already-published tag skips the existing distribution
+          # instead of hard-failing on "400 File already exists".
+          skip-existing: true

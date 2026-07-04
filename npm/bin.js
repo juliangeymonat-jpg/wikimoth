@@ -8,20 +8,25 @@
  * npx pattern it already uses, without Python-toolchain awareness.
  *
  * Behaviour:
- *  - WIKIMOTH_PYTHON, when set, is trusted verbatim (no probing; a wrong pin
- *    fails loudly at server start). Otherwise the launcher finds a Python that
- *    can `import wikimoth` (python3, python, and `py -3` on Windows), with
+ *  - WIKIMOTH_PYTHON, when set, is used as the interpreter but still probed
+ *    once: a pin that can't `import wikimoth`, or has a version below the MCP
+ *    server's floor, fails with an actionable launcher error (not a raw Python
+ *    traceback). Otherwise the launcher finds a Python that can `import wikimoth`
+ *    at a supported version (python3, python, and `py -3` on Windows), with
  *    bounded-timeout probes so a hung interpreter can never wedge the launcher.
+ *  - A found-but-too-old wikimoth (predating the `mcp` server subcommand) is
+ *    skipped, not run, so the uvx self-heal takes over instead of crashing.
  *  - On Windows, real binaries (.exe/.com) are preferred across the whole PATH;
  *    .cmd/.bat shims (scoop/pipx uvx, pyenv-win) are spawned through a shell,
  *    because Node >= 18.20 refuses to spawn them directly (CVE-2024-27980).
  *    On POSIX the executable bit is honored, matching execvp.
  *  - If no Python has WikiMoth, self-heals via `uvx --from 'wikimoth>=0.2,<0.3'`
  *    (ephemeral install pinned to this launcher's expected server contract).
- *  - Injects a resolved vault path (last `--vault`/`--vault=` wins, matching
- *    argparse; then WIKIMOTH_VAULT; then <cwd>/.wikimoth/vault) so the server
- *    never silently reads an empty vault from the client's working directory.
- *    A valueless --vault fails fast, exactly like the Python CLI.
+ *  - Resolves the vault (last `--vault`/`--vault=` wins, matching argparse; then
+ *    WIKIMOTH_VAULT; then <cwd>/.wikimoth/vault) and injects it via the
+ *    WIKIMOTH_VAULT env var (immune to cmd.exe %VAR% expansion on the shell
+ *    path) so the server never silently reads an empty vault from the client's
+ *    working directory. A valueless --vault fails fast, like the Python CLI.
  *  - Passes stdio through untouched (the MCP JSON-RPC channel; all launcher
  *    diagnostics go to stderr) and dies by the child's signal when it is killed.
  */
@@ -155,16 +160,30 @@ function main() {
   let baseArgs = null;
   let version = null;
 
+  const floor = MIN_HYGIENE_VERSION.join('.');
   if (process.env.WIKIMOTH_PYTHON) {
-    // An explicit pin is trusted, not probed: it skips auto-detection, and a
-    // wrong pin fails loudly at server start (visible in client logs).
+    // A pin skips auto-detection but is still probed once, so a mispinned or
+    // too-old interpreter fails with an actionable launcher error instead of a
+    // raw Python traceback (or a crash) at server start.
     const pinned = resolveExecutable(process.env.WIKIMOTH_PYTHON);
     if (!pinned) {
       log(`error: WIKIMOTH_PYTHON=${process.env.WIKIMOTH_PYTHON} not found or not executable.`);
       process.exit(1);
     }
+    const v = wikimothVersion(pinned, []);
+    if (v === null) {
+      log(`error: WIKIMOTH_PYTHON=${pinned} cannot import wikimoth.`);
+      log(`Fix: ${pinned} -m pip install "wikimoth>=${floor}"`);
+      process.exit(1);
+    }
+    if (versionBelow(v, MIN_HYGIENE_VERSION)) {
+      log(`error: WIKIMOTH_PYTHON has wikimoth ${v}, but the MCP server needs >= ${floor}.`);
+      log(`Fix: ${pinned} -m pip install -U "wikimoth>=${floor}"`);
+      process.exit(1);
+    }
     cmd = pinned;
     baseArgs = ['-m', 'wikimoth', 'mcp'];
+    version = v;
   } else {
     const seen = new Set();
     const candidates = [{ name: 'python3', pre: [] }, { name: 'python', pre: [] }];
@@ -177,12 +196,17 @@ function main() {
       if (seen.has(real)) continue; // python3/python often alias the same binary
       seen.add(real);
       const v = wikimothVersion(exe, c.pre);
-      if (v !== null) {
-        cmd = exe;
-        baseArgs = c.pre.concat(['-m', 'wikimoth', 'mcp']);
-        version = v;
-        break;
+      if (v === null) continue; // no wikimoth here
+      if (versionBelow(v, MIN_HYGIENE_VERSION)) {
+        // Too old: predates the `mcp` server subcommand. Skip it so the uvx
+        // self-heal (pinned to a supported range) runs instead of crashing.
+        log(`skipping ${exe}: wikimoth ${v} < ${floor} (needs the MCP server; pip install -U wikimoth).`);
+        continue;
       }
+      cmd = exe;
+      baseArgs = c.pre.concat(['-m', 'wikimoth', 'mcp']);
+      version = v;
+      break;
     }
   }
 
@@ -201,13 +225,11 @@ function main() {
     }
   }
 
-  if (version && versionBelow(version, MIN_HYGIENE_VERSION)) {
-    log(`warning: wikimoth ${version} found; the memory-hygiene tools need >= 0.2 (pip install -U wikimoth).`);
-  }
-
-  const args = explicit
-    ? baseArgs.concat(forwarded)
-    : baseArgs.concat(['--vault', vault], forwarded);
+  // The vault reaches the server via WIKIMOTH_VAULT in the child env (below),
+  // not as a --vault arg we synthesize: an env value is immune to cmd.exe
+  // %VAR% expansion on the .cmd/.bat shell path. A user's own forwarded
+  // --vault still wins (argparse) and is passed through untouched.
+  const args = baseArgs.concat(forwarded);
   const env = Object.assign({}, process.env, { WIKIMOTH_VAULT: vault });
 
   log(`server: ${cmd}${version ? ` (wikimoth ${version})` : ''}`);
@@ -215,11 +237,25 @@ function main() {
 
   const child = spawnSmart(cmd, args, { stdio: 'inherit', env });
 
+  // On Windows a plain child.kill only signals the immediate process; through a
+  // .cmd/.bat shim that is cmd.exe, which does NOT tree-kill its python child,
+  // orphaning the real server. taskkill /T kills the whole tree. (This covers
+  // the Ctrl-C / handled-signal path; a client's hard TerminateProcess runs no
+  // handler at all -- pin WIKIMOTH_PYTHON to a real python.exe to avoid the
+  // shim entirely if that matters.)
+  const killChild = (sig) => {
+    if (IS_WIN && child.pid) {
+      try {
+        spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        return;
+      } catch (_) { /* fall through to child.kill */ }
+    }
+    try { child.kill(sig); } catch (_) { /* child already gone */ }
+  };
+
   const signals = IS_WIN ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
   for (const sig of signals) {
-    process.on(sig, () => {
-      try { child.kill(sig); } catch (_) { /* child already gone */ }
-    });
+    process.on(sig, () => killChild(sig));
   }
   child.on('error', (err) => {
     log(`failed to start the server: ${err.message}`);

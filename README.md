@@ -23,8 +23,21 @@ no GPU, no vector DB, no LLM in the retrieval loop.
 
 ```bash
 pip install wikimoth
+wikimoth demo         # instant multi-hop recall over a bundled demo vault (no setup)
+```
+
+**Already have a `[[wikilink]]` vault** (an Obsidian vault, a notes folder)? Point WikiMoth at it and get the full connect-the-dots view in one command, no capture, no waiting:
+
+```bash
+wikimoth serve --vault /path/to/your/vault      # browse + "what memory fed this answer"
+wikimoth recall --vault /path/to/your/vault "a connect-the-dots question"
+```
+
+**Want it to build memory from your Claude Code sessions?** Install the capture hooks; each session you run and close is written into a `[[wikilink]]` vault:
+
+```bash
 wikimoth install      # capture: turn your Claude Code sessions into a [[wikilink]] vault
-wikimoth serve        # browse the vault + see "what memory fed this answer"
+wikimoth serve        # once you have captured sessions, browse them
 ```
 
 ---
@@ -90,12 +103,15 @@ curates richer pages; we retrieve deterministically.)
 from wikimoth import MemoryRAG, EchoReader
 
 rag = MemoryRAG(reader=EchoReader())          # API-free default reader
-rag.index("path/to/your/wikilink/vault")      # notes → ~400-token chunks, graph built
+rag.index("/path/to/your/wikilink/vault")     # notes → ~400-token chunks, graph built
 
 chunks, tokens = rag.retrieve("a connect-the-dots question?", top_k=8)
-print(f"{len(chunks)} chunks, {tokens} tokens to feed the reader")
+print(f"{len(chunks)} chunks, {tokens} tokens to feed the reader")   # the headline win
 
-print(rag.answer("a connect-the-dots question?"))   # retrieve → compact → read
+# EchoReader is a deterministic stub for wiring/tests: it prints a diagnostic
+# `[echo] ...` line, NOT a natural-language answer. Swap in ClaudeReader (below)
+# for real prose. The retrieval + token numbers above are the same either way.
+print(rag.answer("a connect-the-dots question?"))
 ```
 
 Swap in a real Claude answer (only touches the API when constructed):

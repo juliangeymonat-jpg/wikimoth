@@ -233,6 +233,31 @@ def _err(mid: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
+def _no_vault_text(vault_dir: Any) -> str:
+    """Message when the vault directory does not exist yet.
+
+    Names WIKIMOTH_VAULT first: for a GUI MCP client the server's cwd is the
+    client app's directory, so the cwd-relative default misses and the working
+    fix is an absolute WIKIMOTH_VAULT in the client's env block (or --vault).
+    """
+    return (
+        f"No WikiMoth vault at {vault_dir}. Point the server at your vault by "
+        "setting WIKIMOTH_VAULT to its absolute path (in your MCP client's env "
+        "block), or start it with --vault PATH. To build one from Claude Code "
+        "sessions, run `wikimoth install`."
+    )
+
+
+def _empty_vault_text(vault_dir: Any) -> str:
+    """Message when the vault exists but holds no notes yet (vs a genuine miss)."""
+    return (
+        f"The WikiMoth vault at {vault_dir} exists but has no notes yet, so there "
+        "is nothing to recall. Populate it by running a Claude Code session with "
+        "the capture hooks installed (`wikimoth install`), or point WIKIMOTH_VAULT "
+        "/ --vault at an existing [[wikilink]] vault."
+    )
+
+
 def _format_recall(query: str, pairs, per_chunk, fed: int, total: int, pct: float) -> str:
     header = f'WikiMoth recall for: "{query}"\n'
     if not pairs:
@@ -292,7 +317,14 @@ class _Server:
         method = msg.get("method")
         mid = msg.get("id")  # absent on notifications
         if not isinstance(method, str):
-            return None  # a response or garbage; ignore
+            # A JSON-RPC response legitimately has an id and no method (it carries
+            # result/error): ignore it. But a message with an id and NO
+            # result/error and no valid method is a malformed request -- reply
+            # -32600 keyed to its id so a strict client's pending call resolves
+            # instead of hanging forever.
+            if mid is not None and "result" not in msg and "error" not in msg:
+                return _err(mid, -32600, "invalid request: missing method")
+            return None
         params = msg.get("params")
         if not isinstance(params, dict):
             params = {}  # params MUST be an object; coerce malformed ones
@@ -355,12 +387,12 @@ class _Server:
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
             top_k = self.default_top_k
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
-                "start capturing one, or start the server with --vault PATH.",
-                is_error=True,
-            )
-        _, rag, total, _, _ = self._index()
+            return _tool_text(_no_vault_text(self.vault_dir), is_error=True)
+        _, rag, total, n_notes, _ = self._index()
+        if n_notes == 0:
+            # Vault dir exists but holds no notes: say so, rather than let the
+            # retrieval "No notes matched" imply the query was the problem.
+            return _tool_text(_empty_vault_text(self.vault_dir), is_error=True)
         # Per-request supersession-aware / as-of view (the index is shared/cached).
         as_of = args.get("as_of")
         if isinstance(as_of, str) and as_of.strip():
@@ -381,11 +413,7 @@ class _Server:
 
     def _list_conflicts(self, args: dict) -> dict:
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
-                "start capturing one, or start the server with --vault PATH.",
-                is_error=True,
-            )
+            return _tool_text(_no_vault_text(self.vault_dir), is_error=True)
         report = scan_conflicts(
             self.vault_dir,
             include_inline=bool(args.get("include_inline")),
@@ -395,11 +423,7 @@ class _Server:
 
     def _list_lint(self, args: dict) -> dict:
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
-                "start capturing one, or start the server with --vault PATH.",
-                is_error=True,
-            )
+            return _tool_text(_no_vault_text(self.vault_dir), is_error=True)
         stale = args.get("stale_days")
         if isinstance(stale, bool) or not isinstance(stale, int) or stale < 0:
             stale = 0
@@ -412,11 +436,7 @@ class _Server:
 
     def _list_duplicates(self, args: dict) -> dict:
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
-                "start capturing one, or start the server with --vault PATH.",
-                is_error=True,
-            )
+            return _tool_text(_no_vault_text(self.vault_dir), is_error=True)
         threshold = args.get("threshold")
         if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not (0 < threshold <= 1):
             threshold = 0.8
@@ -429,11 +449,7 @@ class _Server:
 
     def _list_fading(self, args: dict) -> dict:
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"No WikiMoth vault at {self.vault_dir}. Run `wikimoth install` to "
-                "start capturing one, or start the server with --vault PATH.",
-                is_error=True,
-            )
+            return _tool_text(_no_vault_text(self.vault_dir), is_error=True)
         kw: dict = {}
         thr = args.get("threshold")
         if isinstance(thr, (int, float)) and not isinstance(thr, bool) and thr > 0:
@@ -462,10 +478,7 @@ class _Server:
 
     def _status(self) -> dict:
         if not self.vault_dir.is_dir():
-            return _tool_text(
-                f"vault: {self.vault_dir} (not found)\n"
-                "Run `wikimoth install` to start capturing, or restart with --vault PATH."
-            )
+            return _tool_text(_no_vault_text(self.vault_dir))
         _, _, total, n_notes, n_chunks = self._index()
         text = (
             "WikiMoth memory\n"
@@ -476,6 +489,12 @@ class _Server:
             f"token backend: {token_backend()}\n"
             f"default top_k: {self.default_top_k}"
         )
+        if n_notes == 0:
+            text += (
+                "\n\nThis vault has no notes yet. Run a Claude Code session with "
+                "the capture hooks installed (`wikimoth install`) to populate it, "
+                "or point WIKIMOTH_VAULT / --vault at an existing vault."
+            )
         return _tool_text(text)
 
 
